@@ -81,13 +81,34 @@ onDemandOnly <- function (ph, phIndex, tp, rp, ct, wl) {
   rp * wl[1] * wl[2] / 3600
 }
 
+resetIteration <- function(workload) {
+  c(workload[1], workload[2], workload[3], workload[2], workload[5])
+}
+
+# with checkpointing per iteration
 spotInstanceOndemandMixture <- function(ph, phIndex, tp, rp, ct, wl) {
   consumed_price = 0
+  current_mode = "init"
   for (i in phIndex:1) {
     end_time = strptime(ph[i, "effectiveUntil"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - ct, unit="secs"))
-    wl = processWorkload(exec_time, wl)
-    unit_price = if (tp >= ph[i, "price"])  ph[i, "price"] else  rp
+    if (tp >= ph[i, "price"]) {
+      unit_price = ph[i, "price"]
+      if (current_mode == "spot") {
+        wl = processWorkload(exec_time, wl)
+      } else {
+        wl = processWorkload(exec_time, resetIteration(wl))
+        current_mode = "spot"
+      }
+    } else {
+      unit_price = rp
+      if (current_mode == "ondemand") {
+        wl = processWorkload(exec_time, wl)
+      } else {
+        wl = processWorkload(exec_time, resetIteration(wl))
+        current_mode = "ondemand"
+      }
+    }
 #    print(paste("Processed workload", wl[1], wl[2], wl[3], wl[4], wl[5], exec_time, "current spot price is", ph[i, "price"]))
     if (wl[5] <= 0) {
 #      print("Processing is over")
@@ -100,6 +121,7 @@ spotInstanceOndemandMixture <- function(ph, phIndex, tp, rp, ct, wl) {
   consumed_price
 }
 
+# no checkpointing
 spotInstanceOnDemandAlways <- function(ph, phIndex, tp, rp, ct, wl) {
   consumed_price = 0
   for (i in phIndex:1) {
@@ -130,19 +152,17 @@ activities <- hash()
 .set(activities, "spotInstanceOndemandMixture", spotInstanceOndemandMixture)
 .set(activities, "onDemandOnly", onDemandOnly)
 
-runSimulation <- function(key="us-east-1a_g2.2xlarge_linux", price_offset=1.0) {
+runSimulation <- function(submit_time, workload, key, price_offset) {
   library(hash)
   rp <- values(regular_price, key)
   target_price <- rp * price_offset
-  submitTime <- genRandomDateTime()
   price_history <- complete_history[[key]]
-  workload <- genWorkload()
-  current_time <- submitTime
+  current_time <- submit_time
   print(workload)
   for (i in 1:nrow(price_history)) {
     ef = strptime(price_history[i, "effectiveFrom"], "%Y-%m-%dT%H:%M:%OS")
     eu = strptime(price_history[i, "effectiveUntil"], "%Y-%m-%dT%H:%M:%OS")
-    if (submitTime > ef && submitTime < eu) {
+    if (submit_time > ef && submit_time < eu) {
       for(k in keys(activities)) {
         func = values(activities, k)
         totalPrice = func[[1]](price_history, i, target_price, rp, current_time, workload)
@@ -153,3 +173,14 @@ runSimulation <- function(key="us-east-1a_g2.2xlarge_linux", price_offset=1.0) {
   }
 }
 
+simulationAcrossRegions <- function(numRegion=length(names(complete_history)), price_offset=1.0) {
+  submit_time <- genRandomDateTime()
+  workload <- genWorkload()
+
+  for (i in 1:numRegion) {
+    region_key = names(complete_history)[i]
+    print(region_key)
+    runSimulation(submit_time, workload, region_key, price_offset)
+    gc()
+  }
+}
