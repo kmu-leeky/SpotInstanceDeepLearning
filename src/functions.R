@@ -1,3 +1,7 @@
+parseName <- function(name) {
+  c(strsplit(name, "_")[[1]][1], strsplit(name, "_")[[1]][2])
+}
+
 getCompleteHistory <- function(folder) {
   history <- list()
   for(fname in list.files(folder)) {
@@ -8,7 +12,7 @@ getCompleteHistory <- function(folder) {
   }
   history
 }
-
+# This function returns the ratio of price where it is larger or smaller than the target price
 getPricePortion <- function(offset) {
   library(hash)
   for(name in names(complete_history)) {
@@ -18,6 +22,70 @@ getPricePortion <- function(offset) {
     gt <- sum(price_history[which(price_history$price>rp),4])
     ratio = as.numeric(gt) / (as.numeric(lt)+as.numeric(gt))
     print(paste(name, ratio))
+  }
+}
+
+# get the price of spot instance divided by on-demand instance price
+# In this function, when the spot instance price higer than the regular price,
+# the spot instance price is substitued to the regular price
+divideSpotPriceByOndemandPrice <- function() {
+  library(hash)
+  for(name in names(complete_history)) {
+    rp <- values(regular_price, name) * offset
+    price_history <- complete_history[[name]]
+    total_time <- as.integer(sum(price_history$duration), unit="secs")
+    price_history$price[price_history$price>rp] <- rp
+    sp <- sum(as.integer(price_history$duration, unit="secs") * price_history$price)
+    odp <- total_time * rp
+    ratio = sp / odp
+    print(paste(name, ratio))
+  }
+}
+
+spotInstancePriceRatioFig <- function() {
+  ggplot(output, aes(AZs, ratio, colour=InstanceTypes, shape=InstanceTypes)) +geom_point(size = 3) + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position="top") + labs(x="Availability Zones", y="Spot Instance Price Ratio to On-Demand")  + geom_point(colour="grey90", size = 1.5) + ylim(c(0.0, 0.5))
+}
+
+divideOnlySpotPriceByOndemand <- function() {
+  library(hash)
+  output <- data.frame(stringsAsFactors=FALSE)
+  for(name in names(complete_history)) {
+    rp <- values(regular_price, name)
+    price_history <- complete_history[[name]]
+    lower_total_time <- as.integer(sum(price_history[which(price_history$price<rp),4]), unit="secs")
+    sp <- sum(as.integer(price_history[which(price_history$price<rp),4], unit="secs") * price_history[which(price_history$price<rp),1])
+    odp <- lower_total_time * rp
+    ratio = sp / odp
+    if(is.nan(ratio)) ratio = 1.0
+    parsed_name <- parseName(name)
+    output <- rbind(output, data.frame(parsed_name[1], parsed_name[2], ratio, stringsAsFactors=FALSE))
+  }
+  colnames(output) <- c("AZs", "InstanceTypes", "ratio")
+  output
+}
+
+# Get the ratio of the price comparing to the on-demand price
+getPriceRatioToOndemand <- function() {
+  library(hash)
+  for(name in names(complete_history)) {
+    rp <- values(regular_price, name) * offset
+    price_history <- complete_history[[name]]
+    rp <- regular_price[[name]]
+    price_history$ondemandRatio <- price_history$price / rp
+    price_history$timePortion <- as.integer(price_history$duration, unit="secs")/as.integer(sum(price_history$duration), unit="secs")
+    complete_history[[name]] <- price_history
+  }
+  complete_history
+}
+
+drawWeightedCDF <- function() {
+  library(spatstat)
+  for(name in names(complete_history)) {
+    price_history <- complete_history[[name]]
+    quartz()
+    plot(ewcdf(price_history$ondemandRatio, price_history$timePortion), ylim=c(0.0, 1.0), xlim=c(0.0, 1.5), main=name)
+    abline(v=1.0)
+    title(name)
   }
 }
 
@@ -199,7 +267,9 @@ simulationAcrossRegions <- function(numRegion=length(names(complete_history)), p
 
   for (i in 1:numRegion) {
     region_key = names(complete_history)[i]
-    runSimulation(submit_time, workload, region_key, price_offset, output)
+    tryCatch({
+      runSimulation(submit_time, workload, region_key, price_offset, output)
+    }, error = function(e) {print(e)})
     gc()
   }
 }
