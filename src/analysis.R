@@ -79,8 +79,8 @@ buildMultiBarPlots <- function(its, col_indexes, az_names, store=FALSE) {
         ssst = subset(ssst, select=-c(type))
         ssst = ssst[,col_indexes]
         title = paste("iteration:", iter, "round:", rnd, "instance type:", it)
-        barplot(as.matrix(ssst[-c(1),]),beside=T, ylab="Price Ratio to On-Demand Only Execution", legend.text=TRUE, args.legend = list(x  = "top",legend=c("OD+SI Restart", "OD+SI Checkpointing"),horiz=TRUE,inset = -0.1),    density=10,border = TRUE,col=c("red", "blue"), angle=c(0, 45),space=c(0.3, 1), ylim=c(0,1.0), cex.axis=1.5, cex.names=1.5, cex.lab=1.5,xaxt="n", sub="Availability Zone", cex.sub=1.5)
-        text(cex=1.5, x=bp[2,]+1.9, y=-0.05, label=az_names, xpd=TRUE, srt=30, pos=2)
+        barplot(as.matrix(ssst[-c(1),]),beside=T, legend.text=TRUE, args.legend = list(legend=c("OD+SI Restart", "OD+SI Checkpointing"),cex=1.3),    density=10,border = TRUE,col=c("red", "blue"), angle=c(0, 45),space=c(0.3, 1), ylim=c(0,1.0), cex.axis=1.5, cex.names=1.5, cex.lab=1.5,xaxt="n")
+        text(cex=1.5, x=bp[2,]+1.0, y=-0.03, label=az_names, xpd=TRUE, srt=30, pos=2)
         if(store) {
           dev.off()
         }
