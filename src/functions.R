@@ -15,14 +15,18 @@ getCompleteHistory <- function(folder) {
 # This function returns the ratio of price where it is larger or smaller than the target price
 getPricePortion <- function(offset) {
   library(hash)
+  output <- data.frame(stringsAsFactors=FALSE)
   for(name in names(complete_history)) {
     rp <- values(regular_price, name) * offset
     price_history <- complete_history[[name]]
     lt <- sum(price_history[which(price_history$price<rp),4])
     gt <- sum(price_history[which(price_history$price>rp),4])
-    ratio = as.numeric(gt) / (as.numeric(lt)+as.numeric(gt))
-    print(paste(name, ratio))
+    ratio = as.numeric(lt) / (as.numeric(lt)+as.numeric(gt))
+    parsed_name <- parseName(name)
+    output <- rbind(output, data.frame(parsed_name[1], parsed_name[2], ratio, stringsAsFactors=FALSE))
   }
+  colnames(output) <- c("AZs", "InstanceTypes", "ratio")
+  output
 }
 
 # get the price of spot instance divided by on-demand instance price
@@ -279,3 +283,12 @@ runFromScratch <- function(n) {
     simulationAcrossRegions(output="output.out")
   }
 }
+
+getComparePic <- function(instanceType) {
+  library(ggrepel)
+  ggplot(subset(oneshot, InstanceTypes==instanceType), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="System Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes==instanceType), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.0, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
+}
+
+#ggplot(subset(oneshot, InstanceTypes=="g2.2xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.2xlarge"), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.1, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
+
+#ggplot(subset(oneshot, InstanceTypes=="g2.8xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.8xlarge"), max.iter=20000, mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.01, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none") + xlim(0, 1.0) + ylim(0, 1.0)
