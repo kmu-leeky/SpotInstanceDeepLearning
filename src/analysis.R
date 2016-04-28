@@ -41,6 +41,28 @@ addOndemandPriceRatio <- function(summary) {
   summary
 }
 
+addCheckpointPriceRatio <- function(summary) {
+  summary$price_ratio <- NA
+  for(i in 1:nrow(summary)) {
+    self_entry = summary[i,]
+    compare_price =                                                                     summary[(summary$type=="spotInstanceOnDemandAlways")&(summary$iteration==self_entry$iteration)&summary$round==self_entry$round&summary$AZs==self_entry$AZs&summary$InstanceTypes==self_entry$InstanceTypes,]$mean
+    summary[i,"checkpoint_ratio"] <- (compare_price - self_entry$mean) / compare_price
+  }
+  summary
+}
+
+getCheckpointHeavyWorkload <- function(){
+  heavyWorkload<-mSimResult[mSimResult$iteratioin==3&mSimResult$round==3,]
+  heavyWorkload <- addOndemandPriceRatio(heavyWorkload)
+  heavyWorkload<-addCheckpointPriceRatio(heavyWorkload)
+  checkpoint_heavy= heavyWorkload[heavyWorkload$type=="spotInstanceOndemandMixture", c("AZs", "InstanceTypes", "checkpoint_ratio")]
+}
+
+getMergedCheckpointAvail <- function() {
+  checkpoint_ratio_freq_merge = merge(aggr_consec_avail, checkpoint_heavy, by=c("AZs", "InstanceTypes"))
+  checkpoint_ratio_freq_merge
+}
+
 buildPriceRatioBarPlot <- function() {
   az_ratio = dcast(mSimResult, iteration+round+type+InstanceTypes~AZs, value.var="price_ratio")
   sst<- az_ratio[az_ratio$iteration==1&az_ratio$round==1&az_ratio$InstanceTypes=="g2.2xlarge",]
@@ -64,8 +86,11 @@ build8xMultiBarPlots <- function(store=FALSE) {
   buildMultiBarPlots(instance_type, col_indexes, az_names, store)
 }
 buildMultiBarPlots <- function(its, col_indexes, az_names, store=FALSE) {
-  for(iter in c(1,3)) {
-    for(rnd in c(1,3)) {
+  for(iter in c(1,2,3)) {
+    for(rnd in c(1,2,3)) {
+      if(iter != rnd) {
+        next
+      }
       for(it in its) {
         if(!store) {
           dev.new()
@@ -89,3 +114,30 @@ buildMultiBarPlots <- function(its, col_indexes, az_names, store=FALSE) {
   }
 }
 
+getConditionalAvailableTime <- function() {
+  cond_time <- c(60, 600, 3600, 36000, 86400, 604800)
+  for (ct in cond_time) {
+    new_col = numeric()
+    for(i in 1:nrow(consecutive_available)) {
+      span = consecutive_available[i,]$consecutive_available
+      remain = -1
+      if (span > ct) {
+        remain = span - ct
+      }
+      new_col <- append(new_col, remain)
+    }
+    col_name = paste("second", as.character(ct),sep="")
+    consecutive_available[,eval(col_name)] = new_col
+  }
+  consecutive_available
+}
+
+plotConditionalAvailable <- function() {
+  a = getConditionalAvailableTime()
+  plot(ecdf(a[a$second60>0,]$second60))
+  lines(ecdf(a[a$second600>0,]$second600))
+  lines(ecdf(a[a$second3600>0,]$second3600))
+  lines(ecdf(a[a$second36000>0,]$second36000))
+  lines(ecdf(a[a$second86400>0,]$second86400))
+  lines(ecdf(a[a$second604800>0,]$second604800))
+}

@@ -289,6 +289,40 @@ getComparePic <- function(instanceType) {
   ggplot(subset(oneshot, InstanceTypes==instanceType), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="System Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes==instanceType), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.0, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
 }
 
+getConsecutiveAvailableTime <- function(offset = 1.0) {
+  library(hash)
+  output <- data.frame(stringsAsFactors=FALSE)
+  for(name in names(complete_history)) {
+    rp <- values(regular_price, name) * offset
+    price_history <- complete_history[[name]]
+    cons_avail = 0
+    parsed_name <- parseName(name)
+    for (i in 1:nrow(price_history)) {
+      entry = price_history[i,]
+      if (entry$price < rp) {
+        cons_avail = cons_avail + as.integer(entry$duration, unit="secs")
+      } else {
+        if(cons_avail > 0) {
+          if(nrow(output) == 0) {
+            output <- rbind(output, data.frame(parsed_name[1], parsed_name[2],cons_avail, stringsAsFactors=FALSE))
+          } else {
+            output[nrow(output)+1, ] = c(parsed_name[1], parsed_name[2], cons_avail)
+          }
+          cons_avail = 0
+        }
+      }
+    }
+  }
+  colnames(output) <- c("AZs", "InstanceTypes", "consecutive_available")
+  output
+}
+
+getConsecutiveAvailableCount <- function() {
+  output <- data.frame(table(consecutive_available$AZs, consecutive_available$InstanceTypes))
+  colnames(output) <- c("AZs", "InstanceTypes", "Freq")
+}
+
+
 #ggplot(subset(oneshot, InstanceTypes=="g2.2xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.2xlarge"), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.1, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
 
 #ggplot(subset(oneshot, InstanceTypes=="g2.8xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.8xlarge"), max.iter=20000, mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.01, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none") + xlim(0, 1.0) + ylim(0, 1.0)
