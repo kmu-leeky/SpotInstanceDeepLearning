@@ -326,3 +326,38 @@ getConsecutiveAvailableCount <- function() {
 #ggplot(subset(oneshot, InstanceTypes=="g2.2xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.2xlarge"), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.1, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
 
 #ggplot(subset(oneshot, InstanceTypes=="g2.8xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.8xlarge"), max.iter=20000, mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.01, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none") + xlim(0, 1.0) + ylim(0, 1.0)
+
+mergeLogs <- function(paths) {
+  library(hash)
+  aggr_logs = hash()
+  for(fname in list.files(paths[1])) {
+    .set(aggr_logs, fname, hash())
+  }
+  for(p in paths) {
+    for(fname in list.files(p)) {
+      aggr_log = aggr_logs[[fname]]
+      lines <- readLines(file(paste(p,"/",fname,sep=""),open="r"))
+      for(line in lines) {
+        ls = strsplit(line, "\t")
+        if(has.key(ls[[1]][2], aggr_log) == FALSE) {
+          .set(aggr_log, ls[[1]][2], ls[[1]][1])
+        }
+      }
+      .set(aggr_logs, fname, aggr_log)
+    }
+  }
+  aggr_logs
+}
+
+writeAggrLogsToFile <- function(aggr_logs, dest_folder) {
+  for(az in keys(aggr_logs)) {
+    filename=paste(dest_folder, "/", az, sep="")
+    aggr_log = aggr_logs[[az]]
+    if(is.null(aggr_log)) {
+      next
+    }
+    for(k in keys(aggr_log)) {
+      cat(paste(aggr_log[[k]],"\t",k,sep=""), file=filename, append=TRUE, sep="\n")
+    }
+  }
+}
