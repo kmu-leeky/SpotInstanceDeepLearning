@@ -69,7 +69,7 @@ divideOnlySpotPriceByOndemand <- function() {
 }
 
 # Get the ratio of the price comparing to the on-demand price
-getPriceRatioToOndemand <- function() {
+getPriceRatioToOndemand <- function(complete_history) {
   library(hash)
   for(name in names(complete_history)) {
     rp <- values(regular_price, name) * offset
@@ -132,7 +132,7 @@ genRandomDateTime <- function(st="2015-12-19T11:02:26+0900", et="2016-03-17T13:5
 
 # This returns a workload character. The first two element shows the base workload (number of iteration and time per iteration)
 # The third and fourth fields represent the remaining workload
-genWorkload <- function(num_iteration=(5:30), iteration_time=(60:1800)) {
+genWorkload <- function(num_iteration=(5:30), iteration_time=(60:1800), intensity="all") {
   n_iter = sample(num_iteration, 1)
   t_iter = sample(iteration_time, 1)
   c(n_iter, t_iter, n_iter-1, t_iter, 0)
@@ -234,11 +234,69 @@ spotInstanceOnDemandAlways <- function(ph, phIndex, tp, rp, ct, wl) {
   }
   c(consumed_price, consumed_time, total_switch)
 }
+
+getLowestPriceAz <- function(entries) {
+  azs = colnames(entries)
+  min_price = 2147483647
+  lowest_az = NULL
+  for (az in azs) {
+    if(entries[,az] < min_price) {
+      lowest_az = az
+      min_price = entries[,az]
+    }
+  }
+  lowest_az
+}
+
+spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, wl) {
+  consumed_price = 0
+  consumed_time = 0
+  total_switch = 0
+  in_spot_instance = -1
+  azs = colnames(ph)
+  running_az = NA
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  for(i in phIndex:2) {
+    if(is.na(running_az)) {
+      running_az = getLowestPriceAz(ph[i,])
+    }
+    cur_price = ph[i, running_az]
+    print(paste(running_az, cur_price))
+    if(tp < cur_price) {   # interruption and on-demand paying rp
+      running_az = NA
+      cur_price = rp
+      in_spot_instance = 0
+    } else {
+      if (in_spot_instance == 0) {
+        total_switch = total_switch + 1
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    print(paste("execution time", exec_time, "consumed_price", consumed_price))
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+  }
+  c(consumed_price, consumed_time, total_switch)
+}
+
 library(hash)
 activities <- hash()
 .set(activities, "spotInstanceOnDemandAlways", spotInstanceOnDemandAlways)
 .set(activities, "spotInstanceOndemandMixture", spotInstanceOndemandMixture)
 .set(activities, "onDemandOnly", onDemandOnly)
+.set(activities, "spotInstanceAcrossRegionsUntilInterruption", spotInstanceAcrossRegionsUntilInterruption)
+#.set(activities, "spotInstanceAcrossRegionsOnDemandMigration", spotInstanceAcrossRegionsOnDemandMigration)
 
 runSimulation <- function(submit_time, workload, key, price_offset, output="") {
   library(hash)
@@ -265,9 +323,10 @@ runSimulation <- function(submit_time, workload, key, price_offset, output="") {
   }
 }
 
-simulationAcrossRegions <- function(numRegion=length(names(complete_history)), price_offset=1.0, output="") {
+simulationAcrossRegions <- function(complete_history, price_offset=1.0, output="") {
   submit_time <- genRandomDateTime()
   workload <- genWorkload()
+  numRegion=length(names(complete_history))
 
   for (i in 1:numRegion) {
     region_key = names(complete_history)[i]
@@ -356,8 +415,34 @@ writeAggrLogsToFile <- function(aggr_logs, dest_folder) {
     if(is.null(aggr_log)) {
       next
     }
-    for(k in keys(aggr_log)) {
+    for(k in rev(keys(aggr_log))) {
       cat(paste(aggr_log[[k]],"\t",k,sep=""), file=filename, append=TRUE, sep="\n")
     }
   }
+}
+
+buildAllPriceTable <- function(complete_history) {
+  times = sort(unique(unlist(lapply(complete_history, function(x) as.character(x$effectiveFrom)))), TRUE)
+  all_price_table <- data.frame(times, stringsAsFactors=FALSE)
+  rlen = length(rownames(all_price_table))
+  for(name in names(complete_history)) {
+    ph <- complete_history[[name]]
+    rph = length(rownames(ph))
+    all_prices = vector(length=rlen)
+    cur_index = 1
+    print(name)
+    for(i in (1:rph)) {
+      cur_time = ph[i,]$effectiveFrom
+      cur_price = ph[i,]$price
+      for(j in (cur_index:rlen)) {
+        all_prices[j] = cur_price
+        cur_index = cur_index + 1
+        if(cur_time == all_price_table[j,"times"]) {
+          break
+        }
+      }
+    }
+    all_price_table[,name] <- all_prices
+  }
+  all_price_table
 }
