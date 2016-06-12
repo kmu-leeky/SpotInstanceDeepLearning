@@ -123,7 +123,7 @@ getConsecutiveTimeStat <- function(offset=1.0) {
   }
 }
 
-genRandomDateTime <- function(st="2015-12-19T11:02:26+0900", et="2016-03-17T13:53:23+0900") {
+genRandomDateTime <- function(st="2015-12-19T11:02:26+0900", et="2016-05-17T13:53:23+0900") {
   set.seed(Sys.time()+Sys.getpid())
   startTime = strptime(st, "%Y-%m-%dT%H:%M:%OS")
   timeDiff <- as.numeric(strptime(et, "%Y-%m-%dT%H:%M:%OS") - startTime, unit="secs")
@@ -132,7 +132,7 @@ genRandomDateTime <- function(st="2015-12-19T11:02:26+0900", et="2016-03-17T13:5
 
 # This returns a workload character. The first two element shows the base workload (number of iteration and time per iteration)
 # The third and fourth fields represent the remaining workload
-genWorkload <- function(num_iteration=(5:30), iteration_time=(60:1800), intensity="all") {
+genWorkload <- function(num_iteration=(40:100), iteration_time=(60:1800), intensity="all") {
   n_iter = sample(num_iteration, 1)
   t_iter = sample(iteration_time, 1)
   c(n_iter, t_iter, n_iter-1, t_iter, 0)
@@ -252,30 +252,41 @@ spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, 
   consumed_price = 0
   consumed_time = 0
   total_switch = 0
-  in_spot_instance = -1
+  in_spot_instance = 0
   azs = colnames(ph)
-  running_az = NA
+  running_az = getLowestPriceAz(ph[phIndex,])
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
   for(i in phIndex:2) {
-    if(is.na(running_az)) {
+    if (is.na(running_az)) {
       running_az = getLowestPriceAz(ph[i,])
     }
     cur_price = ph[i, running_az]
-    print(paste(running_az, cur_price))
-    if(tp < cur_price) {   # interruption and on-demand paying rp
-      running_az = NA
-      cur_price = rp
-      in_spot_instance = 0
+    if(tp < cur_price) {   # interruption find new spot instance
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+#        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+      }
+      running_az = getLowestPriceAz(ph[i,])
+      cur_price = ph[i, running_az]
+      if (tp < cur_price) { # there is no spot instance, use on-demand rp
+        running_az = NA
+        cur_price = rp
+        in_spot_instance = 0
+#        print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+      } else {
+#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+        in_spot_instance = 1
+      }
     } else {
       if (in_spot_instance == 0) {
         total_switch = total_switch + 1
+#        print(paste("switch from od to si", i, running_az, cur_price, total_switch))
       }
       in_spot_instance = 1
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
     wl = processWorkload(exec_time, wl)
-    print(paste("execution time", exec_time, "consumed_price", consumed_price))
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
@@ -290,6 +301,47 @@ spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, 
   c(consumed_price, consumed_time, total_switch)
 }
 
+spotInstanceBestPrice <- function(ph, phIndex, tp, rp, ct, wl) {
+  prev_running_az = ""
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  for(i in phIndex:2) {
+    running_az = getLowestPriceAz(ph[i,])
+    cur_price = ph[i, running_az]
+    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+      running_az = ""
+      cur_price = rp
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+      }
+      in_spot_instance = 0
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  c(consumed_price, consumed_time, total_switch)
+}
+
 library(hash)
 activities <- hash()
 .set(activities, "spotInstanceOnDemandAlways", spotInstanceOnDemandAlways)
@@ -298,7 +350,38 @@ activities <- hash()
 .set(activities, "spotInstanceAcrossRegionsUntilInterruption", spotInstanceAcrossRegionsUntilInterruption)
 #.set(activities, "spotInstanceAcrossRegionsOnDemandMigration", spotInstanceAcrossRegionsOnDemandMigration)
 
-runSimulation <- function(submit_time, workload, key, price_offset, output="") {
+all_stats=vector()
+
+runSpotInstanceSimAcrossRegion <- function(all_price_table, submit_time, workload, price_offset, output="") {
+  current_time <- submit_time
+  index = which(all_pt$times==submit_time)
+  print(paste("index is ", index))
+  stat = spotInstanceAcrossRegionsUntilInterruption(all_price_table, index, 0.65, 0.65, current_time, workload)
+  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+  all_stats[1] = all_stats[1] + stat[1]
+  all_stats[2] = all_stats[2] + stat[2]
+  stat = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time, workload)
+  all_stats[3] = all_stats[3] + stat[3]
+  all_stats[4] = all_stats[4] + stat[4]
+  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+}
+
+siSim <- function(all_pt, price_offset=1.0, output="") {
+  cand_time = all_pt$times 
+  for ( i in (1:100)) {
+#    submit_time <- genRandomDateTime()
+    submit_time = cand_time[as.integer(runif(1, 100000, 500000))]
+    workload <- genWorkload()
+
+
+    tryCatch({
+      runSpotInstanceSimAcrossRegion(all_pt, submit_time, workload, price_offset)
+    }, error = function(e) {print(e)})
+    gc()
+  }
+}
+
+runSimulationPerRegion <- function(submit_time, workload, key, price_offset, output="") {
   library(hash)
   rp <- values(regular_price, key)
   target_price <- rp * price_offset
@@ -331,7 +414,7 @@ simulationAcrossRegions <- function(complete_history, price_offset=1.0, output="
   for (i in 1:numRegion) {
     region_key = names(complete_history)[i]
     tryCatch({
-      runSimulation(submit_time, workload, region_key, price_offset, output)
+      runSimulationPerRegion(submit_time, workload, region_key, price_offset, output)
     }, error = function(e) {print(e)})
     gc()
   }
@@ -446,3 +529,22 @@ buildAllPriceTable <- function(complete_history) {
   }
   all_price_table
 }
+
+time_windows=c(3600, 21600, 43200, 86400, 259200, 604800, 1209600, 2419200)
+
+buildPriceRelationHash <- function(azs, tws, num_entry=10000) {
+  price_relation_hash <- hash()
+  for(az in azs) {
+    h = hash()
+    for(old in tws) {
+      for(new in tws) {
+        key = paste(old, "-", new, sep="")
+        .set(h, key, matrix(ncol=2, nrow=num_entry))
+      }
+    }
+    .set(price_relation_hash, az, h)
+  }
+  price_relation_hash
+}
+
+
