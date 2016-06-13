@@ -530,7 +530,7 @@ buildAllPriceTable <- function(complete_history) {
   all_price_table
 }
 
-time_windows=c(3600, 21600, 43200, 86400, 259200, 604800, 1209600, 2419200)
+time_windows=c(3600, 21600, 43200, 86400, 259200, 604800, 1209600)
 
 buildPriceRelationHash <- function(azs, tws, num_entry=10000) {
   price_relation_hash <- hash()
@@ -547,4 +547,71 @@ buildPriceRelationHash <- function(azs, tws, num_entry=10000) {
   price_relation_hash
 }
 
+getPriceWindow <- function(price_relation, all_pt, time_windows, time_to_secs=time_to_secs, max_od=TRUE, rp=0.65, avg_out=TRUE, num_sample=10000) {
+  start = nrow(all_pt) - as.integer(nrow(all_pt) * 0.8)
+  end = nrow(all_pt) - as.integer(nrow(all_pt) * 0.2)
+  azs = colnames(all_pt)[2:ncol(all_pt)] # remove the first column (times)
+  for(ns in 1:num_sample) {
+    if((ns %% 10) == 0) print(ns)
+    submit_time = all_pt[as.integer(runif(1, start, end)), "times"]
+    index = which(all_pt$times==submit_time)
+    newer_tws = getIndexOfTimeDiff(time_to_secs, index, time_windows, 1)
+    older_tws = getIndexOfTimeDiff(time_to_secs, index, time_windows, -1)
+    iterateWindows(price_relation, all_pt, newer_tws, time_windows, azs, index, ns, 1, max_od, avg_out, rp)
+    iterateWindows(price_relation, all_pt, older_tws, time_windows, azs, index, ns, -1, max_od, avg_out, rp)
+  }
+}
 
+iterateWindows <- function(price_relation, all_pt, window_itr, time_windows, azs, base_index, cur_index, dir, max_od, avg_out, rp) {
+  col_index = ifelse(dir>0, 2, 1)
+  for(wi in 1:length(window_itr)) {
+    price_means = vector(length=length(azs))
+    for(i in 1:length(azs)) {
+      if(max_od) {
+        mean_price = mean(sapply(all_pt[window_itr[wi]:base_index, azs[i]], function(x) min(x, rp)))
+      } else {
+        mean_price = mean(all_pt[window_itr[wi]:base_index, azs[i]])
+      }
+      price_means[i] = mean_price
+    }
+    if(avg_out) {
+      pm = mean(price_means)
+      price_means = price_means - pm
+    }
+    for(i in 1:length(azs)) {
+      for(tw in time_windows) {
+        if(dir > 0) {
+          time_key=paste(tw,"-",time_windows[wi],sep="")
+        } else {
+          time_key=paste(time_windows[wi],"-",tw,sep="")
+        }
+        price_relation[[azs[i]]][[time_key]][cur_index, col_index] = price_means[i]
+      }
+    }
+  }
+}
+
+iteratePriceRelation <- function(price_relation) {
+  azs = names(price_relation)
+  for(az in azs) {
+    print(az)
+    tws = names(price_relation[[az]])
+    for(tw in tws) {
+      print(paste(tw, cor(price_relation[[az]][[tw]])[1,2]))
+    }
+  }
+}
+
+convertTimeToSeconds <- function(all_pt) {
+  sapply(all_pt[,"times"], function(x) as.numeric(strptime(x, "%Y-%m-%dT%H:%M:%OS"), unit="secs"))
+}
+
+getIndexOfTimeDiff <- function(time_secs, base_time_index, time_windows, direction) {
+  bt = time_secs[base_time_index]
+  new_index = vector(length=length(time_windows))
+  for (i in 1:length(time_windows)) {
+    target = bt + time_windows[i] * direction
+    new_index[i] = unname(which.min(abs(time_secs - target)))[1]
+  }
+  new_index
+}
