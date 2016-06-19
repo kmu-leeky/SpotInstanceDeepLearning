@@ -235,17 +235,13 @@ spotInstanceOnDemandAlways <- function(ph, phIndex, tp, rp, ct, wl) {
   c(consumed_price, consumed_time, total_switch)
 }
 
-getLowestPriceAz <- function(entries) {
-  azs = colnames(entries)
-  min_price = 2147483647
-  lowest_az = NULL
-  for (az in azs) {
-    if(entries[,az] < min_price) {
-      lowest_az = az
-      min_price = entries[,az]
-    }
+getLowestPriceAz <- function(entries, prev_running_az="") {
+  min_azs = names(entries)[which(entries==min(entries[,2:length(entries)]))]
+  if(prev_running_az %in% min_azs) {
+    return (prev_running_az)
+  } else {
+    return (min_azs[1])
   }
-  lowest_az
 }
 
 spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, wl) {
@@ -301,7 +297,79 @@ spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, 
   c(consumed_price, consumed_time, total_switch)
 }
 
-spotInstanceBestPrice <- function(ph, phIndex, tp, rp, ct, wl) {
+getIndexShouldMigrate <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
+  total_cost_savings = numeric()
+  prev_running_az = ""
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  cur_az = ""
+  az_before_interrupt = ""
+  price_no_interrupt = 0
+  time_before_switch = 0
+  cost_saving_switch = 0.0
+  interrupted = FALSE
+  prev_interrupt_index = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  for(i in phIndex:2) {
+    interrupted = FALSE
+    if (is.na(cs) || i==phIndex || i %in% cs) {
+      running_az = getLowestPriceAz(ph[i,], prev_running_az)
+    } else {
+      running_az = prev_running_az
+    }
+#    running_az = getLowestPriceAz(ph[i,])
+    cur_price = ph[i, running_az]
+    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+      running_az = ""
+      cur_price = rp
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+        interrupted = TRUE
+      }
+      in_spot_instance = 0
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+        interrupted = TRUE
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if(interrupted == TRUE) {
+      print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
+      if(length(cost_saving_switch) >0 && cost_saving_switch > 0.012) {
+        total_cost_savings = c(total_cost_savings, prev_interrupt_index)
+      }
+      prev_interrupt_index = i
+      time_before_switch = 0
+      cost_saving_switch = 0.0
+      az_before_interrupt = prev_running_az
+    }
+    price_no_interrupt = ph[i, az_before_interrupt]
+    time_before_switch = time_before_switch + exec_time
+    cost_saving_switch = cost_saving_switch + exec_time * (price_no_interrupt - cur_price)/3600.0
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  print(c(consumed_price, consumed_time, total_switch))
+  total_cost_savings
+}
+
+
+spotInstanceBestPrice <- function(ph, phIndex, tp, rp, ct, wl, shouldMigrateIndex=NA) {
   prev_running_az = ""
   in_spot_instance = 0
   total_switch = 0
@@ -309,7 +377,12 @@ spotInstanceBestPrice <- function(ph, phIndex, tp, rp, ct, wl) {
   consumed_price = 0
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
   for(i in phIndex:2) {
-    running_az = getLowestPriceAz(ph[i,])
+    if (is.na(shouldMigrateIndex) || i==phIndex || i %in% shouldMigrateIndex) {
+      running_az = getLowestPriceAz(ph[i,], prev_running_az)
+    } else {
+      running_az = prev_running_az
+    }
+
     cur_price = ph[i, running_az]
     if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
       running_az = ""
@@ -354,7 +427,7 @@ all_stats=vector()
 
 runSpotInstanceSimAcrossRegion <- function(all_price_table, submit_time, workload, price_offset, output="") {
   current_time <- submit_time
-  index = which(all_pt$times==submit_time)
+  index = which(all_price_table$times==submit_time)
   print(paste("index is ", index))
   stat = spotInstanceAcrossRegionsUntilInterruption(all_price_table, index, 0.65, 0.65, current_time, workload)
   print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
@@ -591,7 +664,7 @@ iterateWindows <- function(price_relation, all_pt, window_itr, time_windows, azs
   }
 }
 
-iteratePriceRelation <- function(price_relation) {
+iteratePriceRelationPerAzTw <- function(price_relation) {
   azs = names(price_relation)
   for(az in azs) {
     print(az)
@@ -600,6 +673,29 @@ iteratePriceRelation <- function(price_relation) {
       print(paste(tw, cor(price_relation[[az]][[tw]])[1,2]))
     }
   }
+}
+
+iteratePriceRelationPerTw <- function(price_relation, time_windows=time_windows) {
+  azs = names(price_relation)
+  tws = names(price_relation[[azs[1]]])
+  l = length(time_windows)
+  out_matrix = matrix(nrow=l, ncol=l)
+  rownames(out_matrix) = time_windows
+  colnames(out_matrix) = time_windows
+  for(tw in tws) {
+    commands = "cor(rbind("
+    for(az in azs) {
+      commands = paste(commands, "price_relation[[\"", az, "\"]][[\"", tw, "\"]],", sep="")
+    }
+    commands = substr(commands, 1, nchar(commands)-1)
+    commands = paste(commands, "))", sep="")
+    output = eval(parse(text=commands))
+    cor_coef = output[1,2]
+    times = unlist(strsplit(tw,"-"))
+    out_matrix[times[1], times[2]] = output[1,2]
+#    print(paste(tw, output[1,2]))
+  }
+  out_matrix
 }
 
 convertTimeToSeconds <- function(all_pt) {
