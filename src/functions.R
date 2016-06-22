@@ -648,10 +648,10 @@ buildPriceRelationHash <- function(azs, tws, num_entry=10000) {
   price_relation_hash
 }
 
-getPriceWindow <- function(price_relation, all_pt, time_windows, time_to_secs=time_to_secs, max_od=TRUE, rp=0.65, avg_out=TRUE, num_sample=10000) {
+getPriceWindow <- function(price_relation, all_pt, time_windows, time_to_secs=time_to_secs, max_od=TRUE, rp="ondemand", avg_out=TRUE, num_sample=10000) {
   start = nrow(all_pt) - as.integer(nrow(all_pt) * 0.8)
   end = nrow(all_pt) - as.integer(nrow(all_pt) * 0.2)
-  azs = colnames(all_pt)[2:ncol(all_pt)] # remove the first column (times)
+  azs = colnames(all_pt)[1:(ncol(all_pt)-2)] # remove the first column (times)
   for(ns in 1:num_sample) {
     if((ns %% 10) == 0) print(ns)
     submit_time = all_pt[as.integer(runif(1, start, end)), "times"]
@@ -668,9 +668,11 @@ iterateWindows <- function(price_relation, all_pt, window_itr, time_windows, azs
   col_index = ifelse(dir>0, 2, 1)
   for(wi in 1:length(window_itr)) {
     price_means = vector(length=length(azs))
+    od_prices = all_pt[window_itr[wi]:base_index, rp]
     for(i in 1:length(azs)) {
       if(max_od) {
-        mean_price = mean(sapply(all_pt[window_itr[wi]:base_index, azs[i]], function(x) min(x, rp)))
+        
+        mean_price = mean(pmin(all_pt[window_itr[wi]:base_index, azs[i]], od_prices))
       } else {
         mean_price = mean(all_pt[window_itr[wi]:base_index, azs[i]])
       }
