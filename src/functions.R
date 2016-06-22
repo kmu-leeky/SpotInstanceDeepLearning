@@ -297,7 +297,11 @@ spotInstanceAcrossRegionsUntilInterruption <- function(ph, phIndex, tp, rp, ct, 
   c(consumed_price, consumed_time, total_switch)
 }
 
-getIndexShouldMigrate <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
+getIndexShouldMigrateWindow <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
+  total_required_time = wl[1] * wl[2]
+}
+
+getIndexShouldMigrateSequential <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
   total_cost_savings = numeric()
   prev_running_az = ""
   in_spot_instance = 0
@@ -314,12 +318,7 @@ getIndexShouldMigrate <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
   for(i in phIndex:2) {
     interrupted = FALSE
-    if (is.na(cs) || i==phIndex || i %in% cs) {
-      running_az = getLowestPriceAz(ph[i,], prev_running_az)
-    } else {
-      running_az = prev_running_az
-    }
-#    running_az = getLowestPriceAz(ph[i,])
+    running_az = getLowestPriceAz(ph[i,], prev_running_az)
     cur_price = ph[i, running_az]
     if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
       running_az = ""
@@ -344,7 +343,7 @@ getIndexShouldMigrate <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
 
     if(interrupted == TRUE) {
       print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
-      if(length(cost_saving_switch) >0 && cost_saving_switch > 0.012) {
+      if(length(cost_saving_switch) >0 && cost_saving_switch > minGainTh) {
         total_cost_savings = c(total_cost_savings, prev_interrupt_index)
       }
       prev_interrupt_index = i
@@ -365,7 +364,7 @@ getIndexShouldMigrate <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
     prev_running_az = running_az
   }
   print(c(consumed_price, consumed_time, total_switch))
-  total_cost_savings
+  c(c(consumed_price, consumed_time, total_switch), total_cost_savings)
 }
 
 
@@ -384,6 +383,7 @@ spotInstanceBestPrice <- function(ph, phIndex, tp, rp, ct, wl, shouldMigrateInde
     }
 
     cur_price = ph[i, running_az]
+    print(paste(running_az, i, cur_price))
     if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
       running_az = ""
       cur_price = rp
@@ -423,22 +423,21 @@ activities <- hash()
 .set(activities, "spotInstanceAcrossRegionsUntilInterruption", spotInstanceAcrossRegionsUntilInterruption)
 #.set(activities, "spotInstanceAcrossRegionsOnDemandMigration", spotInstanceAcrossRegionsOnDemandMigration)
 
-all_stats=vector()
-
 runSpotInstanceSimAcrossRegion <- function(all_price_table, submit_time, workload, price_offset, output="") {
   current_time <- submit_time
   index = which(all_price_table$times==submit_time)
   print(paste("index is ", index))
   stat = spotInstanceAcrossRegionsUntilInterruption(all_price_table, index, 0.65, 0.65, current_time, workload)
   print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
-  all_stats[1] = all_stats[1] + stat[1]
-  all_stats[2] = all_stats[2] + stat[2]
-  stat = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time, workload)
-  all_stats[3] = all_stats[3] + stat[3]
-  all_stats[4] = all_stats[4] + stat[4]
-  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
-}
 
+#  stat = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time, workload)
+  stat = getIndexShouldMigrate(all_price_table, index, 0.65, 0.65, current_time,        workload, 0.015)
+  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+  stat <- stat[-c(1:3)]
+  stat = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time,       workload, stat)
+  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+
+}
 siSim <- function(all_pt, price_offset=1.0, output="") {
   cand_time = all_pt$times 
   for ( i in (1:100)) {
@@ -576,7 +575,6 @@ writeAggrLogsToFile <- function(aggr_logs, dest_folder) {
     }
   }
 }
-
 buildAllPriceTable <- function(complete_history) {
   times = sort(unique(unlist(lapply(complete_history, function(x) as.character(x$effectiveFrom)))), TRUE)
   all_price_table <- data.frame(times, stringsAsFactors=FALSE)
@@ -601,6 +599,36 @@ buildAllPriceTable <- function(complete_history) {
     all_price_table[,name] <- all_prices
   }
   all_price_table
+}
+
+convertStringToSeconds <- function(time_string) {
+  as.numeric(strptime(time_string, "%Y-%m-%dT%H:%M:%OS"), unit="secs")
+}
+
+buildAllPaymentTable <- function(all_price_table, od_price = 0.65) {
+  azs = names(all_price_table)[-c(1)]
+  rlen = length(rownames(all_price_table))
+  od_payments = vector(length=rlen)
+  elapsed_hours = vector(length=rlen)
+  end_time_secs = convertStringToSeconds(all_price_table[1,"times"])
+  payment_table = as.data.frame(matrix(0,ncol=length(azs)+1, nrow=rlen))
+  for (i in 1:rlen) {
+    start_time_secs = convertStringToSeconds(all_price_table[i,"times"])
+    elapsed_time_hrs = (end_time_secs - start_time_secs)/3600.0
+    od_payments[i] = elapsed_time_hrs * od_price
+    elapsed_hours[i] = elapsed_time_hrs
+    end_time_secs = start_time_secs
+  }
+  for(az in azs) {
+    az_payment = vector(length=rlen)
+    for(i in 1:rlen) {
+      az_payment[i] = all_price_table[i, az] * elapsed_hours[i]
+    }
+    print(az)
+    payment_table[, az] = az_payment
+  }
+  payment_table[, "ondemand"] = od_payments
+  payment_table
 }
 
 time_windows=c(3600, 21600, 43200, 86400, 259200, 604800, 1209600)
@@ -634,7 +662,8 @@ getPriceWindow <- function(price_relation, all_pt, time_windows, time_to_secs=ti
     iterateWindows(price_relation, all_pt, older_tws, time_windows, azs, index, ns, -1, max_od, avg_out, rp)
   }
 }
-
+# getPriceWindow(price_relation, all_pt_g2_2x, time_windows, time_to_secs, TRUE, 0.65, TRUE, 10000)
+# time_to_secs = convertTimeToSeconds(all_pt_g2_2x)
 iterateWindows <- function(price_relation, all_pt, window_itr, time_windows, azs, base_index, cur_index, dir, max_od, avg_out, rp) {
   col_index = ifelse(dir>0, 2, 1)
   for(wi in 1:length(window_itr)) {
@@ -701,7 +730,6 @@ iteratePriceRelationPerTw <- function(price_relation, time_windows=time_windows)
 convertTimeToSeconds <- function(all_pt) {
   sapply(all_pt[,"times"], function(x) as.numeric(strptime(x, "%Y-%m-%dT%H:%M:%OS"), unit="secs"))
 }
-
 getIndexOfTimeDiff <- function(time_secs, base_time_index, time_windows, direction) {
   bt = time_secs[base_time_index]
   new_index = vector(length=length(time_windows))
