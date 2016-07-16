@@ -254,11 +254,12 @@ getLowestPriceAz <- function(rindex, prev_running_az="", exclude_azs=NULL) {
   }
 }
 
-spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, ct, wl) {
+spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
   consumed_price = 0
   consumed_time = 0
   total_switch = 0
   in_spot_instance = 0
+  setPriceTable(all_pt_g2_2x)
   azs = colnames(ph)
   running_az = getLowestPriceAz(phIndex)
   prev_running_az = running_az
@@ -291,7 +292,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, ct, wl) 
         .set(migration_plan, as.character(i), running_az)
       }
     } else {
-      if (in_spot_instance == 0) {
+      if (prev_running_az == "ondemand") {
         total_switch = total_switch + 1
         .set(migration_plan, as.character(i), running_az)
 #        print(paste("switch from od to si", i, running_az, cur_price, total_switch))
@@ -313,7 +314,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, ct, wl) 
     current_time = end_time
   }
   for(k in rev(keys(migration_plan))) {
-    print(paste(k, migration_plan[[k]]))
+#    print(paste(k, migration_plan[[k]]))
   }
   list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
 }
@@ -471,7 +472,7 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
 getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
   setPriceTable(all_pt_g2_2x)
   total_cost_savings = numeric()
-  prev_running_az = ""
+  prev_running_az = getLowestPriceAz(phIndex, "")
   in_spot_instance = 0
   total_switch = 0
   consumed_time = 0
@@ -511,7 +512,7 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if(interrupted == TRUE) {
-      print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
+#      print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
       if(length(cost_saving_switch) >0 && cost_saving_switch > minGainTh) {
         total_cost_savings = c(total_cost_savings, prev_interrupt_index)
       }
@@ -532,7 +533,7 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     current_time = end_time
     prev_running_az = running_az
   }
-  print(c(consumed_price, consumed_time, total_switch))
+#  print(c(consumed_price, consumed_time, total_switch))
   list("stat"=c(consumed_price, consumed_time, total_switch), "should_migrate_indexes"=total_cost_savings)
 }
 
@@ -610,7 +611,7 @@ spotInstanceBestPriceFromPaymentTable <- function(phIndex, wl) {
   list("stat"=c(consumed_price, consumed_time, total_switch),                           "migrate_summary"=migrate_summary)
 }
 
-spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, shouldNotMigrateIndexes=NULL) {
+spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA,                         shouldNotMigrateIndexes=NULL) {
   in_spot_instance = 0
   total_switch = 0
   consumed_time = 0
@@ -620,7 +621,12 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
   migrate_indexes = vector()
   migrate_azs = vector()
   migrate_benefit = vector()
-
+  if(length(shouldMigrateIndexes) == 0) {
+    shouldMigrateIndexes = NA
+  }
+  if(length(shouldNotMigrateIndexes) == 0) {
+    shouldNotMigrateIndexes = NULL
+  }
   for(i in phIndex:2) {
     running_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
@@ -657,6 +663,411 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
   list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
 }
 
+genMlSubmitTime <- function(all_pt_str) {
+  all_pt = eval(parse(text=all_pt_str))
+  time_start = nrow(all_pt) - as.integer(nrow(all_pt) * 0.8)
+  time_end = nrow(all_pt) - as.integer(nrow(all_pt) * 0.6)
+  azs = colnames(all_pt)[2:(ncol(all_pt)-1)] # remove the first column (times)
+  submit_time = all_pt[as.integer(runif(1, time_start, time_end)), "times"]
+  index = which(all_pt$times==submit_time)
+  index
+}
+
+getBestAzUsingModel <- function(phIndex, prev_running_az, time_to_secs, time_windows, max_od=TRUE, avg_out = TRUE, key="3600", rp=0.65){
+  setPriceTable(all_payment_g2_2x)
+  window_itr = getIndexOfTimeDiff(time_to_secs, phIndex, time_windows, -1)
+  records = as.data.frame(matrix(nrow=length(azs), ncol=length(time_windows)))
+  rownames(records) = azs
+  for(wi in 1:length(window_itr)) {
+    price_means = vector(length=length(azs))
+    od_prices = ph[window_itr[wi]:phIndex, "ondemand"]
+    for(i in 1:length(azs)) {
+      if(max_od) {
+        mean_price = mean(pmin(ph[window_itr[wi]:phIndex, azs[i]], od_prices))
+      } else {
+        mean_price = mean(ph[window_itr[wi]:phIndex, azs[i]])
+      }
+      price_means[i] = mean_price
+    }
+    if(avg_out) {
+      pm = mean(price_means)
+      price_means = price_means - pm
+    }
+    for(i in 1:length(azs)) {
+      records[azs[i], wi] = price_means[i]
+    }
+  }
+  predicts = double()
+  for(i in 1:length(azs)) {
+    model = models[[azs[i]]][[key]]
+    predicts[i] = predict(model, records[azs[i],])
+  }
+  names(predicts) = azs
+  ordered_predicts = order(predicts)
+  setPriceTable(all_pt_g2_2x)
+  for (op in ordered_predicts) {
+   az = names(predicts)[op]
+   if (ph[phIndex, az] < rp) {
+     return (names(predicts)[op])
+   }
+  }
+  return ("ondemand")
+#  min_expected_az = names(predicts)[which(min(predicts)==predicts)]
+}
+
+getMostAvailableAz <- function(phIndex, rp=0.65) {
+  setPriceTable(all_pt_g2_2x)
+  total_row = length(all_pt_g2_2x[[azs[1]]])
+  max_length = 0
+  max_len_az = ""
+  for(az in azs) {
+    win_len = min(which(ph[[az]][phIndex:total_row]>rp))
+    if(max_length < win_len) {
+      max_len_az = az
+      max_length = win_len
+    }
+  }
+  max_len_az
+}
+
+spotInstanceWithMostAvailableUntilInterrupt <- function(phIndex, tp, rp, wl) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getMostAvailableAz(phIndex)
+  running_az = prev_running_az
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  migration_plan = hash()
+  .set(migration_plan, as.character(phIndex), running_az)
+  for(i in phIndex:2) {
+    if (prev_running_az == "ondemand") {
+      running_az = getMostAvailableAz(i)
+#      print("previously in ondemand")
+    }
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+#    print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+ #       print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+      }
+      running_az = getMostAvailableAz(i)
+      cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+      if (tp < cur_price) { # there is no spot instance, use on-demand rp
+        running_az = "ondemand"
+        cur_price = rp
+        in_spot_instance = 0
+        if(prev_running_az != "ondemand") {
+          .set(migration_plan, as.character(i), "ondemand")
+        }
+  #      print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+      } else {
+#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+        in_spot_instance = 1
+        .set(migration_plan, as.character(i), running_az)
+      }
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+   #     print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+        .set(migration_plan, as.character(i), running_az)
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
+}
+
+spotInstanceUsingModelsUntilInterrupt <- function(phIndex, tp, rp, wl) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getBestAzUsingModel(phIndex, "", time_to_secs, time_windows)
+  running_az = prev_running_az
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  migration_plan = hash()
+  .set(migration_plan, as.character(phIndex), running_az)
+  for(i in phIndex:2) {
+    if (prev_running_az == "ondemand") {
+      running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+#      print("previously in ondemand")
+    }
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+#    print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+ #       print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+      }
+      running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+      cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+      if (tp < cur_price) { # there is no spot instance, use on-demand rp
+        running_az = "ondemand"
+        cur_price = rp
+        in_spot_instance = 0
+        if(prev_running_az != "ondemand") {
+          .set(migration_plan, as.character(i), "ondemand")
+        }
+  #      print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+      } else {
+#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+        in_spot_instance = 1
+        .set(migration_plan, as.character(i), running_az)
+      }
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+   #     print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))    
+        .set(migration_plan, as.character(i), running_az)
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
+}
+
+spotInstanceUsingModelsPeriodicCheck <- function(phIndex, tp, rp, wl, period=3600) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  elapsed_period = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getBestAzUsingModel(phIndex, "", time_to_secs, time_windows)
+  running_az = prev_running_az
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  migration_plan = hash()
+  .set(migration_plan, as.character(phIndex), running_az)
+  for(i in phIndex:2) {
+    if (prev_running_az == "ondemand" || elapsed_period > period) {
+      running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+#      print(paste("previously in ondemand or elapsed time", elapsed_period, running_az))
+      elapsed_period = 0
+    }
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+#    print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+#        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+      }
+      running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+      cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+      if (tp < cur_price) { # there is no spot instance, use on-demand rp
+        running_az = "ondemand"
+        cur_price = rp
+        in_spot_instance = 0
+        if(prev_running_az != "ondemand") {
+          .set(migration_plan, as.character(i), "ondemand")
+        }
+#        print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+      } else {
+#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+        in_spot_instance = 1
+        .set(migration_plan, as.character(i), running_az)
+      }
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+#        print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+        .set(migration_plan, as.character(i), running_az)
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    elapsed_period = elapsed_period + exec_time
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
+}
+
+spotInstanceUsingModelsMigrationThreshold <- function(phIndex, tp, rp, wl, min_time=600, period = 3600, threshold=0.9) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  elapsed_period = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getBestAzUsingModel(phIndex, "", time_to_secs, time_windows)
+  running_az = prev_running_az
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  migration_plan = hash()
+  .set(migration_plan, as.character(phIndex), running_az)
+  for(i in phIndex:2) {
+ 
+    if (prev_running_az == "ondemand" || elapsed_period > period) {
+      candidate_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+      candidate_price = ifelse(candidate_az=="ondemand", rp, ph[i, candidate_az])
+      prev_az_price = ifelse(prev_running_az=="ondemand", rp, ph[i, prev_running_az])
+      if (candidate_price <= (prev_az_price*threshold)) {
+        running_az = candidate_az
+      }
+      elapsed_period = 0
+    } else {
+      running_az = prev_running_az
+    }
+
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+ #   print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+     #   print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+      }
+      running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
+      cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+      if (tp < cur_price) { # there is no spot instance, use on-demand rp
+        running_az = "ondemand"
+        cur_price = rp
+        in_spot_instance = 0
+        if(prev_running_az != "ondemand") {
+          .set(migration_plan, as.character(i), "ondemand")
+        }
+    #    print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+      } else {
+#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+        in_spot_instance = 1
+        .set(migration_plan, as.character(i), running_az)
+      }
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+#        print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+        .set(migration_plan, as.character(i), running_az)
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    elapsed_period = elapsed_period + exec_time
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
+}
+
+spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, threshold=0.9) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getLowestPriceAz(phIndex, "")
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  shouldMigrateIndexes = NA
+  shouldNotMigrateIndexes = NULL
+  elapsed_time = 0
+
+  for(i in phIndex:2) {
+    if (elapsed_time > period) {
+      candidate_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+      candidate_price = ifelse(candidate_az=="ondemand", rp, ph[i, candidate_az])
+      prev_price = ifelse(prev_running_az=="ondemand", rp, ph[i, prev_running_az])
+      running_az = ifelse(prev_price * threshold > candidate_price, candidate_az, prev_running_az)
+      elapsed_time = 0
+    } else {
+      running_az = prev_running_az
+    }
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+#    print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+      running_az = "ondemand"
+      cur_price = rp
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+      }
+      in_spot_instance = 0
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+    elapsed_time = elapsed_time + exec_time
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+
+    current_time = end_time
+    prev_running_az = running_az
+  }
+  migrate_summary = data.frame(migrate_indexes, migrate_azs, migrate_benefit)
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
+}
+
+
+
 library(hash)
 activities <- hash()
 .set(activities, "spotInstanceOnDemandAlways", spotInstanceOnDemandAlways)
@@ -665,34 +1076,70 @@ activities <- hash()
 .set(activities, "spotInstanceAcrossRegionsUntilInterruption", spotInstanceAcrossRegionsUntilInterruption)
 #.set(activities, "spotInstanceAcrossRegionsOnDemandMigration", spotInstanceAcrossRegionsOnDemandMigration)
 
-runSpotInstanceSimAcrossRegion <- function(all_price_table, submit_time, workload, price_offset, output="") {
-  current_time <- submit_time
-  index = which(all_price_table$times==submit_time)
-  print(paste("index is ", index))
-  stat = spotInstanceAcrossRegionsUntilInterruption(all_price_table, index, 0.65, 0.65, current_time, workload)
-  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+runSpotInstanceSimAcrossRegion <- function(index, workload, price_offset, run_index, output="") {
+#print(paste("index is ", index))
+  stat = spotInstanceAcrossRegionsUntilInterruption(index, 0.65, 0.65,  workload)[["stat"]]
+  print(paste("spotInstanceAcrossRegionsUntilInterruption", index, workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceAcrossRegionsUntilInterruption"]][run_index,]=c(stat[1], stat[3])
 
-#  stat = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time, workload)
-  result = getIndexShouldMigrateSequential(all_price_table, index, 0.65, 0.65, current_time,        workload, 0.015)
+  result = getIndexShouldMigrateSequential(index, 0.65, 0.65, workload, 0.015)
   stat = result[["stat"]]
-  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
-  result = spotInstanceBestPrice(all_price_table, index, 0.65, 0.65, current_time, workload, result[["should_migrate_indexes"]])
-  stat = result[["stat"]]
-  print(paste(submit_time, workload[1], workload[2], stat[1], stat[2], stat[3]))
+  print(paste("spotInstanceBestPrice", index, workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceBestPrice"]][run_index,]=c(stat[1], stat[3])
 
+  result = spotInstanceBestPrice(index, 0.65, 0.65, workload, result[["should_migrate_indexes"]])
+  stat = result[["stat"]]
+  print(paste("spotInstanceBestPriceWithShouldMigrate", workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceBestPriceWithShouldMigrate"]][run_index,]=c(stat[1], stat[3])
+
+  result = spotInstanceUsingModelsUntilInterrupt(index, 0.65, 0.65, workload)
+  stat = result[["stat"]]
+  print(paste("spotInstanceUsingModelsUntilInterrupt", workload[1], workload[2],        stat[1], stat[2], stat[3]))
+  performance[["spotInstanceUsingModelsUntilInterrupt"]][run_index,]=c(stat[1], stat[3])
+
+  result = spotInstanceUsingModelsPeriodicCheck(index, 0.65, 0.65, workload)
+  stat = result[["stat"]]
+  print(paste("spotInstanceUsingModelsMigrationThreshold", workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceUsingModelsMigrationThreshold"]][run_index,]=c(stat[1], stat[3])
+  
+  result = spotInstanceBestPriceThreshold(index, 0.65, 0.65, workload)
+  stat = result[["stat"]]
+  print(paste("spotInstanceBestPriceThreshold", workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceBestPriceThreshold"]][run_index,]=c(stat[1], stat[3])
+
+  result = spotInstanceWithMostAvailableUntilInterrupt(index, 0.65, 0.65, workload)
+  stat = result[["stat"]]
+  print(paste("spotInstanceWithMostAvailableUntilInterrupt", workload[1], workload[2], stat[1], stat[2], stat[3]))
+  performance[["spotInstanceWithMostAvailableUntilInterrupt"]][run_index,]=c(stat[1], stat[3])
 }
-siSim <- function(all_pt, price_offset=1.0, output="") {
-  cand_time = all_pt$times 
-  for ( i in (1:100)) {
+siSim <- function(price_offset=1.0, output="", num_run=100) {
+  if(FALSE) {
+    performance <<- hash()
+    .set(performance, "spotInstanceAcrossRegionsUntilInterruption", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceBestPrice", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceBestPriceWithShouldMigrate", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceUsingModelsUntilInterrupt", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceUsingModelsMigrationThreshold", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceBestPriceThreshold", data.frame(cost=numeric(0), migration=numeric(0)))
+    .set(performance, "spotInstanceWithMostAvailableUntilInterrupt", data.frame(cost=numeric(0), migration=numeric(0)))
+  }
+  sample_df = performance[["spotInstanceAcrossRegionsUntilInterruption"]]
+  result_start_index = nrow(sample_df)
+  for ( i in (1:num_run)) {
 #    submit_time <- genRandomDateTime()
-    submit_time = cand_time[as.integer(runif(1, 100000, 500000))]
     workload <- genWorkload()
-
-
+    index = genMlSubmitTime("all_payment_g2_2x")
     tryCatch({
-      runSpotInstanceSimAcrossRegion(all_pt, submit_time, workload, price_offset)
+      runSpotInstanceSimAcrossRegion(index, workload, price_offset, (i+result_start_index))
     }, error = function(e) {print(e)})
     gc()
+  }
+}
+
+printPerformanceSummary <- function() {
+  ns <- names(performance)
+  for (n in ns) {
+    print(paste(n, "cost", mean(performance[[n]]$cost), "migration", mean(performance[[n]]$migration)))
   }
 }
 
