@@ -7,16 +7,82 @@ getCompleteHistory <- function(folder) {
   for(fname in list.files(folder)) {
     print(fname)
     tryCatch ({
-      history[[fname]] <- addDiffTime(as.data.frame(read.table(paste(folder,"/",fname,sep=""))))
+      history[[fname]] <- addDiffTime(as.data.frame(read.table(paste(folder,"/",fname,sep="")), stringsAsFactors=FALSE))
     }, error=function(e) {print(e)})
   }
   history
 }
+
+addDiffTime <- function(x) {
+  x$V3 <- rowShift(x$V2, -1)
+  x$V4 <- strptime(x$V3, "%Y-%m-%dT%H:%M:%OS") - strptime(x$V2, "%Y-%m-%dT%H:%M:%OS")
+  colnames(x) <- c("price", "effectiveFrom", "effectiveUntil", "duration")
+  x$duration[1] <- 0
+  x
+}
+
+addFromToSeconds <- function(complete_history) {
+  ns = names(complete_history)
+  for (n in ns) {
+    price_table = complete_history[[n]]
+    price_table[, "FromSeconds"] = sapply(price_table[,"effectiveFrom"], function(x) as.numeric(strptime(x, "%Y-%m-%dT%H:%M:%OS"), unit="secs"))
+    complete_history[[n]] = price_table
+    print(n)
+  }
+  complete_history
+}
+
+rowShift <- function(x, shiftLen = 1L) {
+  r <- (1L + shiftLen):(length(x) + shiftLen)
+  r[r<1] <- NA
+  return(x[r])
+}
+
+azToRegionName <- function(az) {
+  if(grepl("^us-west-1", az)) return("US West (N. California)")
+  else if(grepl("^us-west-2", az)) return("US West (Oregon)")
+  else if(grepl("^us-east-1", az)) return("US East (N. Virginia)")
+  else if(grepl("^ap-southeast-1", az)) return("Asia Pacific (Singapore)")
+  else if(grepl("^ap-southeast-2", az)) return("Asia Pacific (Sydney)")
+  else if(grepl("^ap-northeast-1", az)) return("Asia Pacific (Tokyo)")
+  else if(grepl("^eu-central-1", az)) return("EU (Frankfurt)")
+  else if(grepl("^eu-west-1", az)) return("EU (Ireland)")
+  else return (NA)
+}
+
+#createAcfFigures(g2_hourly_price, c("eu-central-1a", "us-east-1e", "us-west-1a", "eu-west-1a"), "/Users/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/figures")
+createAcfFigures <- function(hourly_matrix, target_azs, out_folder) {
+  for(az in target_azs) {
+    pdf(paste(out_folder,"/g2-acf-",az,".pdf",sep=""))
+    val_acf<-acf(hourly_matrix[az,], lag.max=168, plot=FALSE)
+    par(mar=c(5,5,1,2)+0.1)
+    plot(val_acf, xlab="LAG (Hours)", type="l", xaxt="n", main="", cex.axis=1.7, cex.lab=1.7)
+    axis(1, at=seq(0, 168, 24), labels=seq(0, 168, 24), cex.axis=1.7)
+    abline(v=seq(0, 168, 24), lty=3)
+    dev.off()
+  }
+}
+
+
+buildRegularPrice <- function(price_file_csv, folder) {
+  regular_price = hash()
+  price_file = read.csv(price_file_csv)
+  price_file = price_file[which(price_file$TermType=="OnDemand"&price_file$Operating.System=="Linux"&price_file$Tenancy=="Shared"),]
+  for (fname in list.files(folder)) {
+    az = strsplit(fname, "_")[[1]][1]
+    instance_type = strsplit(fname, "_")[[1]][2]
+    price = price_file[which(price_file$Location==azToRegionName(az)&price_file$Instance.Type==instance_type),"PricePerUnit"]
+    .set(regular_price, fname, price)
+  }
+  regular_price
+}
+
 # This function returns the ratio of price where it is larger or smaller than the target price
 getPricePortion <- function(offset) {
   library(hash)
   output <- data.frame(stringsAsFactors=FALSE)
   for(name in names(complete_history)) {
+    if(!is.numeric(values(regular_price, name))) next
     rp <- values(regular_price, name) * offset
     price_history <- complete_history[[name]]
     lt <- sum(price_history[which(price_history$price<rp),4])
@@ -32,9 +98,10 @@ getPricePortion <- function(offset) {
 # get the price of spot instance divided by on-demand instance price
 # In this function, when the spot instance price higer than the regular price,
 # the spot instance price is substitued to the regular price
-divideSpotPriceByOndemandPrice <- function() {
+divideSpotPriceByOndemandPrice <- function(offset=1.0) {
   library(hash)
   for(name in names(complete_history)) {
+    if(!is.numeric(values(regular_price, name))) next
     rp <- values(regular_price, name) * offset
     price_history <- complete_history[[name]]
     total_time <- as.integer(sum(price_history$duration), unit="secs")
@@ -46,6 +113,70 @@ divideSpotPriceByOndemandPrice <- function() {
   }
 }
 
+getSpotInstanceAvailability <- function(complete_history) {
+  ns = names(complete_history)
+  target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge")
+  availability = generateEmptyDf(ns, target_instances)
+  for(name in ns) {
+    price_table = complete_history[[name]]
+    r_key = parseName(name)[1]
+    c_key = parseName(name)[2]
+    if(c_key %in% target_instances && is.numeric(values(regular_price, name))) {
+      availability[r_key, c_key] = sum(price_table[which(price_table$ondemandRatio<=1.0), "timePortion"])
+    }
+  }
+  availability[!is.na(availability$g2.2xlarge),]
+}
+
+# get the number of changes from ondemand and spot instances
+getNumberOfInterruption <- function(complete_history) {
+  ns = names(complete_history)
+  target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge")
+  interrupts = generateEmptyDf(ns, target_instances)
+  for(name in ns) {
+    price_table = complete_history[[name]]
+    r_key = parseName(name)[1]
+    c_key = parseName(name)[2]
+    if(c_key %in% target_instances && is.numeric(values(regular_price, name))) {
+      interrupts[r_key, c_key] = countNumberOfInterrupts(regular_price[[name]], price_table$price)
+    }
+  }
+  interrupts[!is.na(interrupts$g2.2xlarge),]
+}
+
+countNumberOfInterrupts <- function(rp, prices) {
+  num_int = 0
+  in_spot = ifelse(prices[length(prices)] > rp, FALSE, TRUE)
+  for(i in length(prices):1) {
+    if(prices[i] > rp) {
+      if(in_spot == TRUE) {
+        num_int = num_int + 1
+      }
+      in_spot = FALSE
+    } else {
+      if (in_spot == FALSE) {
+        num_int = num_int + 1
+      }
+      in_spot = TRUE
+    }
+  }
+  num_int
+}
+
+generateEmptyDf <- function(all_names, col_names) {
+  row_name = vector()
+  for(name in all_names) {
+    n = parseName(name)
+    row_name = append(row_name, n[1])
+  }
+
+  row_name = unique(row_name)
+  out_df = as.data.frame(matrix(nrow = length(row_name), ncol = length(col_names)))
+  colnames(out_df) <- col_names
+  rownames(out_df) <- row_name
+  out_df
+}
+
 spotInstancePriceRatioFig <- function() {
   ggplot(output, aes(AZs, ratio, colour=InstanceTypes, shape=InstanceTypes)) +geom_point(size = 3) + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position="top") + labs(x="Availability Zones", y="Spot Instance Price Ratio to On-Demand")  + geom_point(colour="grey90", size = 1.5) + ylim(c(0.0, 0.5))
 }
@@ -54,6 +185,7 @@ divideOnlySpotPriceByOndemand <- function() {
   library(hash)
   output <- data.frame(stringsAsFactors=FALSE)
   for(name in names(complete_history)) {
+    if(!is.numeric(values(regular_price, name))) next
     rp <- values(regular_price, name)
     price_history <- complete_history[[name]]
     lower_total_time <- as.integer(sum(price_history[which(price_history$price<rp),4]), unit="secs")
@@ -69,9 +201,10 @@ divideOnlySpotPriceByOndemand <- function() {
 }
 
 # Get the ratio of the price comparing to the on-demand price
-getPriceRatioToOndemand <- function(complete_history) {
+getPriceRatioToOndemand <- function(complete_history, offset=1.0) {
   library(hash)
   for(name in names(complete_history)) {
+    if(!is.numeric(values(regular_price, name))) next
     rp <- values(regular_price, name) * offset
     price_history <- complete_history[[name]]
     rp <- regular_price[[name]]
@@ -82,6 +215,65 @@ getPriceRatioToOndemand <- function(complete_history) {
   complete_history
 }
 
+#heat_matrix_r3_2x=genHeatMap(complete_history, "r3.2xlarge")
+#heat_matrix_g2_2x=genHeatMap(complete_history, "g2.2xlarge")
+#heat_matrix_c4_2x=genHeatMap(complete_history, "c4.2xlarge")
+#heat_matrix_m4_2x=genHeatMap(complete_history, "m4.2xlarge")
+#heat_matrix_i2_2x=genHeatMap(complete_history, "i2.2xlarge")
+genHeatMap <- function(complete_history, instance_type) {
+  elements = names(complete_history)
+  spacing = 3600
+  start_time = complete_history[["ap-northeast-1a_g2.2xlarge_linux"]][nrow(complete_history[["ap-northeast-1a_g2.2xlarge_linux"]]), "FromSeconds"] + 86400
+  end_time = complete_history[["ap-northeast-1a_g2.2xlarge_linux"]][1, "FromSeconds"] - 86400
+  out_matrix = matrix(, nrow=0, ncol=((end_time-start_time)/spacing))
+  az_names = vector()
+  for(e in elements) {
+    ns = parseName(e)
+    if(ns[2] == instance_type && ns[1]!="ap-southeast-2c") {
+      spot_price = complete_history[[e]]
+      cur_price = vector()
+      for(current in seq(start_time, end_time, spacing)) {
+        maxless <- max(spot_price$FromSeconds[spot_price$FromSeconds < current])
+        price = spot_price[which(spot_price$FromSeconds == maxless), "ondemandRatio"]
+        cur_price = append(cur_price, price) 
+      }
+      print(paste(ns[1], length(cur_price)))
+      out_matrix = rbind(out_matrix, cur_price)
+      if (length(cur_price) > 0) {
+        az_names = append(az_names, ns[1])
+      }
+    }
+  }
+  print(paste(nrow(out_matrix), length(az_names)))
+  rownames(out_matrix) <- az_names
+  out_matrix
+}
+
+#drawHeatmap(heat_matrix_r3[,1400:2096], "/Users/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/figures/heatmap-r2-2x.pdf")
+drawHeatmap <- function(mat, fname = "") {
+  ncol_mat = ncol(mat)
+  col_name=c()
+  for(i in 1:ncol_mat) {
+    if(i %% 24 == 0) {
+      col_name=append(col_name, i/24)
+    } else {
+      col_name=append(col_name, NA)
+    }
+  }
+  if(fname=="") {
+    dev.new()
+  } else {
+    pdf(fname)
+  }
+  lwid=c(0.001, 4.999)
+  lhei=c(0.01, 4.0, 0.1)
+  lmat=rbind(c(0,3), c(2, 1), c(0, 4))
+#  heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none", lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0,  cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), margins =c(4,    11), key=FALSE)
+  heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none",     keysize=1, lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0,  cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), key.par=list(mar=c(6,5.0,1.5,5.0)),key.xlab="spot instance price ratio to the on-demand instance price",key.title="", margins =c(4,11), key=FALSE) 
+  if(fname != "") {
+    dev.off()
+  }
+}
 drawWeightedCDF <- function() {
   library(spatstat)
   for(name in names(complete_history)) {
@@ -1237,8 +1429,12 @@ mergeLogs <- function(paths) {
   for(fname in list.files(paths[1])) {
     .set(aggr_logs, fname, hash())
   }
+  org_files = keys(aggr_logs)
+  print(org_files)
   for(p in paths) {
     for(fname in list.files(p)) {
+      if(!(fname %in% org_files)) next
+      print(paste(p,fname))
       aggr_log = aggr_logs[[fname]]
       lines <- readLines(file(paste(p,"/",fname,sep=""),open="r"))
       for(line in lines) {
