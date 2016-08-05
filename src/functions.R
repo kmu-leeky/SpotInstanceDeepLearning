@@ -113,19 +113,24 @@ divideSpotPriceByOndemandPrice <- function(offset=1.0) {
   }
 }
 
-getSpotInstanceAvailability <- function(complete_history) {
+getSpotInstanceAvailability <- function(complete_history, target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge"), offset=1.0) {
   ns = names(complete_history)
-  target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge")
   availability = generateEmptyDf(ns, target_instances)
   for(name in ns) {
     price_table = complete_history[[name]]
     r_key = parseName(name)[1]
     c_key = parseName(name)[2]
     if(c_key %in% target_instances && is.numeric(values(regular_price, name))) {
-      availability[r_key, c_key] = sum(price_table[which(price_table$ondemandRatio<=1.0), "timePortion"])
+      availability[r_key, c_key] = sum(price_table[which(price_table$ondemandRatio<=offset), "timePortion"])
     }
   }
-  availability[!is.na(availability$g2.2xlarge),]
+
+  if(length(target_instances) > 1) {
+    output = availability[!is.na(availability$g2.2xlarge),]
+  } else {
+    output = availability
+  }
+  output
 }
 
 # get the number of changes from ondemand and spot instances
@@ -181,25 +186,68 @@ spotInstancePriceRatioFig <- function() {
   ggplot(output, aes(AZs, ratio, colour=InstanceTypes, shape=InstanceTypes)) +geom_point(size = 3) + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position="top") + labs(x="Availability Zones", y="Spot Instance Price Ratio to On-Demand")  + geom_point(colour="grey90", size = 1.5) + ylim(c(0.0, 0.5))
 }
 
-divideOnlySpotPriceByOndemand <- function() {
+divideOnlySpotPriceByOndemand <- function(complete_history, offset=1.0) {
   library(hash)
   output <- data.frame(stringsAsFactors=FALSE)
   for(name in names(complete_history)) {
     if(!is.numeric(values(regular_price, name))) next
     rp <- values(regular_price, name)
+    threshold = rp * offset
     price_history <- complete_history[[name]]
-    lower_total_time <- as.integer(sum(price_history[which(price_history$price<rp),4]), unit="secs")
-    sp <- sum(as.integer(price_history[which(price_history$price<rp),4], unit="secs") * price_history[which(price_history$price<rp),1])
+    lower_total_time <- as.integer(sum(price_history[which(price_history$price<threshold),4]), unit="secs")
+    sp <- sum(as.integer(price_history[which(price_history$price<threshold),4], unit="secs") * price_history[which(price_history$price<threshold),1])
     odp <- lower_total_time * rp
     ratio = sp / odp
     if(is.nan(ratio)) ratio = 1.0
     parsed_name <- parseName(name)
     output <- rbind(output, data.frame(parsed_name[1], parsed_name[2], ratio, stringsAsFactors=FALSE))
   }
-  colnames(output) <- c("AZs", "InstanceTypes", "ratio")
+  colnames(output) <- c("AZs", "InstanceTypes", paste("ratio-",offset,sep=""))
   output
 }
 
+getCostGainWithDifferentOffset <- function(complete_history) {
+  range = seq(0.3, 1.0, 0.1)
+  output <- divideOnlySpotPriceByOndemand(complete_history, 0.2)
+  for(r in range) {
+    r_available = divideOnlySpotPriceByOndemand(complete_history, r)
+    output <-merge(output, r_available)
+  }
+  rownames(output) <- output$AZs
+  subset(output, select=-c(AZs, InstanceTypes))
+}
+
+getAvailabilityWithDifferentOffset <- function(complete_history) {
+  range = seq(0.3, 1.0, 0.1)
+  output <- getSpotInstanceAvailability(complete_history, c("g2.2xlarge"), 0.2)
+  colnames(output) <- "0.2"
+  for(r in range) {
+    r_available = getSpotInstanceAvailability(complete_history, c("g2.2xlarge"), r)
+    colnames(r_available) <- as.character(r)
+    output <-cbind(output, r_available)
+  }
+  output
+}
+
+# generateCostGainAvailabilityPlot(g2_cost_gain, g2_availability, "/Users/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/figures/")
+generateCostGainAvailabilityPlot <- function(cost_gain, availability, out_path="") {
+  azs = rownames(cost_gain)
+  for (az in azs) {
+    if(out_path == "") {
+      dev.new()
+    } else {
+      pdf(paste(out_path, "/g2-cost-gain-availability-", az, ".pdf", sep=""))
+    }
+    par(mar=c(5,5,1,2)+0.1)
+    plot(colnames(g2_cost_gain), 1-g2_cost_gain[az,], ylim=c(0.0,1.0), ylab="Ratio", xlab="Spot instance bid price ratio", pch=c(15), cex.axis=1.5, cex.lab=1.5)
+    legend(x="bottomright", c("paid cost ratio", "availability rate"), lty=c(0, 1), pch=c(15, NA), cex=1.5)
+    par(new=TRUE)
+    plot(colnames(g2_cost_gain), g2_availability[az,], type="l", axes=FALSE, bty="n", xlab="", ylab="",ylim=c(0.0,1.0))
+    if(out_path != "") {
+      dev.off()
+    }
+  }
+}
 # Get the ratio of the price comparing to the on-demand price
 getPriceRatioToOndemand <- function(complete_history, offset=1.0) {
   library(hash)
