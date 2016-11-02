@@ -2,12 +2,47 @@ parseName <- function(name) {
   c(strsplit(name, "_")[[1]][1], strsplit(name, "_")[[1]][2])
 }
 
-getCompleteHistory <- function(folder) {
+mergeTwoHashTable<-function(src, dest) {
+  keys = names(src)
+  for(k in keys) {
+    .set(dest, k, src[[k]])
+  }
+  dest
+}
+
+#boxplot(all_interrupts, xlab="EC2 instance types (-Optimized)", ylab="Average number of interruptions per day")
+fillInterruptTable <- function(dfs) {
+  target_df = dfs[1]
+  for(df in dfs) {
+    cn = colnames(df)
+    rn = rownames(df)
+    print(df)
+    for(c in cn) {
+      for(r in rn) {
+        if(!is.na(df[r,c])) {
+          target_df[r,c] = df[r,c]
+          print(target_df)
+        }
+      }
+    }
+  }
+  target_df
+}
+
+getCompleteHistory <- function(folder, instance_types=c(), azs=c()) {
   history <- list()
   for(fname in list.files(folder)) {
     print(fname)
+    if(length(instance_types) > 0) {
+      it = parseName(fname)[2]
+      az = parseName(fname)[1]
+      if(!(it %in% instance_types) || (length(azs) > 0 && !(az %in% azs))) {
+        print(paste(fname, "is not in the instance types. skip it"))
+        next
+      }
+    }
     tryCatch ({
-      history[[fname]] <- addDiffTime(as.data.frame(read.table(paste(folder,"/",fname,sep="")), stringsAsFactors=FALSE))
+      history[[fname]] <- addDiffTime(as.data.frame(read.table(paste(folder,"/",fname,sep=""), stringsAsFactors=FALSE), stringsAsFactors=FALSE))
     }, error=function(e) {print(e)})
   }
   history
@@ -25,6 +60,7 @@ addFromToSeconds <- function(complete_history) {
   ns = names(complete_history)
   for (n in ns) {
     price_table = complete_history[[n]]
+    print(nrow(price_table))
     price_table[, "FromSeconds"] = sapply(price_table[,"effectiveFrom"], function(x) as.numeric(strptime(x, "%Y-%m-%dT%H:%M:%OS"), unit="secs"))
     complete_history[[n]] = price_table
     print(n)
@@ -48,6 +84,91 @@ azToRegionName <- function(az) {
   else if(grepl("^eu-central-1", az)) return("EU (Frankfurt)")
   else if(grepl("^eu-west-1", az)) return("EU (Ireland)")
   else return (NA)
+}
+
+# aggregate(latency~sourceAz+destination, data=upload_times, mean)
+buildUploadTime <- function(path) {
+  times <- data.frame()
+  options(stringsAsFactors = FALSE)
+  for(fname in list.files(path)) {
+    print(fname)
+    df = as.data.frame(read.table(paste(path,"/",fname,sep="")), stringsAsFactors=FALSE)
+    df$V2 <- unlist(lapply(df$V2, function(x) paste(strsplit(x, "-")[[1]][5], strsplit(x, "-")[[1]][6], strsplit(x, "-")[[1]][7], sep="-")))
+    times <- rbind(times, df)
+  }
+  colnames(times) <- c("sourceAz", "destination", "latency")
+  times
+}
+
+buildCheckpointTime <- function(path) {
+  checkpoint_time <- data.frame(stringsAsFactors=FALSE)
+  for(fname in list.files(path)) {
+    print(fname)
+    df = as.data.frame(read.table(paste(path,"/",fname,sep="")), stringsAsFactors=FALSE)
+    checkpoint_time <- rbind(checkpoint_time, df)
+  }
+  colnames(checkpoint_time) <- c("AZ", "Size", "Latency")
+  mean_time = setNames(aggregate(Latency~Size, data=checkpoint_time, mean), c("Size", "mean"))
+  min_time =  setNames(aggregate(Latency~Size, data=checkpoint_time, min), c("Size", "min"))
+  max_time =  setNames(aggregate(Latency~Size, data=checkpoint_time, max), c("Size", "max"))
+  checkpoint_time = merge(merge(mean_time, min_time), max_time)
+  checkpoint_time
+}
+
+createCheckpointTimeFigure <- function(checkpoint_time, path) {
+  pdf(path)
+  par(mar=c(5,5,1,2)+0.1)
+  plot(checkpoint_time$mean, ylim=c(0.05, 4.5), pch=19, xaxt="n", ann = FALSE, cex.axis=1.5)
+  mtext(side=2, text="latency of checkpoint (seconds)", line=3,cex=1.3)
+  mtext(side=1, text="checkpoint file size (log scale)", line=4, cex=1.3)
+  text(1:11, par("usr")[3] - 0.2, labels = c("1MB", "2MB", "4MB", "8MB", "16MB", "32MB", "64MB", "128MB", "256MB", "512MB", "1024MB"), srt = 45, pos = 1, xpd = TRUE, cex=1.2)
+  axis(side=1, at=1:11, labels=FALSE)
+  arrows(1:11, checkpoint_time$min, 1:11,checkpoint_time$max, length=0.05, angle=90, code=3)
+  dev.off()
+}
+
+getTemporalPriceDiff<-function(hourly_price) {
+  ntimes<-ncol(hourly_price)
+  azs <- rownames(hourly_price)
+  diffs = vector()
+  for (az in azs) {
+    total_diff = 0
+    for (i in 1:(ntimes-1)) {
+      diff=abs(hourly_price[az, i] - hourly_price[az, i+1])
+      total_diff = total_diff + diff
+    }
+    diffs = append(diffs, (total_diff/ntimes))
+    print(paste(az, total_diff))
+  }
+  out_df = data.frame(diffs)
+  rownames(out_df) = azs
+  colnames(out_df) = c("priceDiff")
+  out_df
+}
+
+createAvailabilityGainFigure <- function() {
+  avail = read.csv("/User/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/availability.csv")
+  gain = read.csv("/User/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/cost_gain.csv")
+  ratio=avail/gain
+  ratio$az = gain$az
+  gpu_ratio = ratio$GPU
+  names(gpu_ratio) <- ratio$az
+  par(mar=c(8,4,1,2)+0.1)
+  barplot(sort(gpu_ratio,TRUE),las=2,ylab="availability and cost gain", cex.axis=1.3, cex.names=1.1)
+}
+readSpotStartTime <- function(input_file) {
+  conn <- file(input_file,open="r")
+  linn <-readLines(conn)
+  output_df = data.frame(matrix(nrow=length(linn), ncol=3))
+  # each line is in the format of "Body": "1471390605439,eu-central-1b,90021",
+  for (i in 1:length(linn)){
+    rm_quote = gsub('"', "", linn[i])
+    output_df[i, 1] = strsplit(rm_quote, "[,|:]")[[1]][2]
+    output_df[i, 2] = strsplit(rm_quote, "[,|:]")[[1]][3]
+    output_df[i, 3] = as.numeric(strsplit(rm_quote, "[,|:]")[[1]][4])
+  }
+  colnames(output_df) <- c("submit-time", "az", "latency")
+  output_df
 }
 
 #createAcfFigures(g2_hourly_price, c("eu-central-1a", "us-east-1e", "us-west-1a", "eu-west-1a"), "/Users/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/figures")
@@ -113,6 +234,11 @@ divideSpotPriceByOndemandPrice <- function(offset=1.0) {
   }
 }
 
+convertAzToContinent <- function(az) {
+  az_split = strsplit(az, "-")
+  az_split[[1]][1]
+}
+
 getSpotInstanceAvailability <- function(complete_history, target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge"), offset=1.0) {
   ns = names(complete_history)
   availability = generateEmptyDf(ns, target_instances)
@@ -133,7 +259,7 @@ getSpotInstanceAvailability <- function(complete_history, target_instances = c("
   output
 }
 
-# get the number of changes from ondemand and spot instances
+# get the number of changes from ondemand and spot instances daily
 getNumberOfInterruption <- function(complete_history) {
   ns = names(complete_history)
   target_instances = c("g2.2xlarge", "c4.2xlarge", "m4.2xlarge", "r3.2xlarge", "i2.2xlarge")
@@ -142,26 +268,26 @@ getNumberOfInterruption <- function(complete_history) {
     price_table = complete_history[[name]]
     r_key = parseName(name)[1]
     c_key = parseName(name)[2]
+    n_days = (price_table$FromSeconds[1]-price_table$FromSeconds[nrow(price_table)])/(3600*24)
+    print(paste(name, n_days))
     if(c_key %in% target_instances && is.numeric(values(regular_price, name))) {
-      interrupts[r_key, c_key] = countNumberOfInterrupts(regular_price[[name]], price_table$price)
+      interrupts[r_key, c_key] = countNumberOfInterrupts(regular_price[[name]], price_table$price)/n_days
     }
   }
-  interrupts[!is.na(interrupts$g2.2xlarge),]
+#  interrupts[!is.na(interrupts$g2.2xlarge),]
+  interrupts
 }
 
 countNumberOfInterrupts <- function(rp, prices) {
   num_int = 0
-  in_spot = ifelse(prices[length(prices)] > rp, FALSE, TRUE)
+  in_spot = ifelse(prices[length(prices)] >= rp, FALSE, TRUE)
   for(i in length(prices):1) {
-    if(prices[i] > rp) {
+    if(prices[i] >= rp) {
       if(in_spot == TRUE) {
         num_int = num_int + 1
       }
       in_spot = FALSE
     } else {
-      if (in_spot == FALSE) {
-        num_int = num_int + 1
-      }
       in_spot = TRUE
     }
   }
@@ -271,8 +397,8 @@ getPriceRatioToOndemand <- function(complete_history, offset=1.0) {
 genHeatMap <- function(complete_history, instance_type) {
   elements = names(complete_history)
   spacing = 3600
-  start_time = complete_history[["ap-northeast-1a_g2.2xlarge_linux"]][nrow(complete_history[["ap-northeast-1a_g2.2xlarge_linux"]]), "FromSeconds"] + 86400
-  end_time = complete_history[["ap-northeast-1a_g2.2xlarge_linux"]][1, "FromSeconds"] - 86400
+  start_time = complete_history[[1]][nrow(complete_history[[1]]), "FromSeconds"] + 86400
+  end_time = complete_history[[1]][1, "FromSeconds"] - 86400
   out_matrix = matrix(, nrow=0, ncol=((end_time-start_time)/spacing))
   az_names = vector()
   for(e in elements) {
@@ -500,7 +626,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
   total_switch = 0
   in_spot_instance = 0
   setPriceTable(all_pt_g2_2x)
-  azs = colnames(ph)
+  azs = names(ph)
   running_az = getLowestPriceAz(phIndex)
   prev_running_az = running_az
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
@@ -1759,4 +1885,9 @@ getIndexOfTimeDiff <- function(time_secs, base_time_index, time_windows, directi
     new_index[i] = unname(which.min(abs(time_secs - target)))[1]
   }
   new_index
+}
+
+# start_latency<-genStartLatency("/Users/kyungyonglee/Documents/Research/SpotInstance/SpotInstanceDeepLearning/src/ec2_start_latency_only")
+genStartLatency <- function(path) {
+  as.numeric(unlist(read.table(path)))
 }
