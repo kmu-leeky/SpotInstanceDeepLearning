@@ -625,6 +625,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
   consumed_time = 0
   total_switch = 0
   in_spot_instance = 0
+  instance_start_time = 0
   setPriceTable(all_pt_g2_2x)
   azs = names(ph)
   running_az = getLowestPriceAz(phIndex)
@@ -640,6 +641,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     if(tp < cur_price) {   # interruption find new spot instance
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)   
 #        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getLowestPriceAz(i)
@@ -660,6 +662,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     } else {
       if (prev_running_az == "ondemand") {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
         .set(migration_plan, as.character(i), running_az)
 #        print(paste("switch from od to si", i, running_az, cur_price, total_switch))
       }
@@ -667,20 +670,27 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    prev_running_az = running_az
+    current_time = end_time
+
+    if(instance_start_time > 0) {
+      instance_start_time = instance_start_time - exec_time
+      consumed_time = consumed_time + exec_time
+      if (instance_start_time < 0) {
+        exec_time = instance_start_time * -1
+        consumed_time = consumed_time - exec_time
+      } else {
+        next
+      }
+    }
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
-    prev_running_az = running_az
     if (wl[5] <= 0) {
       consumed_price = consumed_price + (wl[5] / 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
-
-    current_time = end_time
-  }
-  for(k in rev(keys(migration_plan))) {
-#    print(paste(k, migration_plan[[k]]))
   }
   list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
 }
@@ -1889,5 +1899,10 @@ getIndexOfTimeDiff <- function(time_secs, base_time_index, time_windows, directi
 
 # start_latency<-genStartLatency("/Users/kyungyonglee/Documents/Research/SpotInstance/SpotInstanceDeepLearning/src/ec2_start_latency_only")
 genStartLatency <- function(path) {
-  as.numeric(unlist(read.table(path)))
+  start_latency <<- as.numeric(unlist(read.table(path)))
+  start_latency
+}
+
+getInstanceStartTime <- function(sl) {
+  as.integer(sample(sl)[1]/1000)
 }
