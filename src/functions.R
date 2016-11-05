@@ -628,12 +628,14 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
   instance_start_time = 0
   setPriceTable(all_pt_g2_2x)
   azs = names(ph)
+  partial_pricing = c(0,0)  # first element is price, second is time
   running_az = getLowestPriceAz(phIndex)
   prev_running_az = running_az
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
   migration_plan = hash()
   .set(migration_plan, as.character(phIndex), running_az)
   for(i in phIndex:2) {
+    switched=FALSE
     if (prev_running_az == "ondemand") {
       running_az = getLowestPriceAz(i)
     }
@@ -641,6 +643,8 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     if(tp < cur_price) {   # interruption find new spot instance
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
+        switched=TRUE
+        consumed_price = consumed_price - partial_pricing[1]
         instance_start_time = getInstanceStartTime(start_latency)   
 #        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
@@ -662,6 +666,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     } else {
       if (prev_running_az == "ondemand") {
         total_switch = total_switch + 1
+        switched=TRUE
         instance_start_time = getInstanceStartTime(start_latency)
         .set(migration_plan, as.character(i), running_az)
 #        print(paste("switch from od to si", i, running_az, cur_price, total_switch))
@@ -686,13 +691,26 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
+    partial_pricing = calculatePartialPricing(exec_time, cur_price, partial_pricing)
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price / 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
   }
   list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
+}
+
+calculatePartialPricing <- function(exec_time, current_price, partial_pricing) {
+  cur_time = partial_pricing[2] + exec_time
+  if (cur_time < 3600) {
+    partial_pricing[1] = partial_pricing[1] + (exec_time * current_price / 3600)
+    partial_pricing[2] = cur_time
+  } else {
+    partial_pricing[2] = cur_time %% 3600
+    partial_pricing[1] = partial_pricing[2] * current_price / 3600
+  }
+  partial_pricing
 }
 
 getIndexShouldMigrateWindow <- function(ph, phIndex, tp, rp, ct, wl, minGainTh) {
@@ -805,7 +823,7 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
  #           print(paste(i, az_before_interrupt, price_no_interrupt, running_az, cur_price,    exec_time))
 
       if (wl[5] <= 0) {
-        consumed_price = consumed_price + (wl[5] / 3600)
+        consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
         consumed_time = consumed_time + wl[5]
         break
       }
@@ -901,7 +919,7 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     time_before_switch = time_before_switch + exec_time
     cost_saving_switch = cost_saving_switch + exec_time * (price_no_interrupt - cur_price)/3600.0
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price / 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
@@ -937,7 +955,7 @@ selectOptimalAz <- function(i, prev_running_az, shouldMigrateIndex=NA) {
 }
 
 spotInstanceBestPriceFromPaymentTable <- function(phIndex, wl) {
-  setPriceTable(all_payment_g2_2x)
+  setPriceTable(all_pt_g2_2x)
   in_spot_instance = 0
   total_switch = 0
   consumed_time = 0
@@ -997,6 +1015,8 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
   migrate_indexes = vector()
   migrate_azs = vector()
   migrate_benefit = vector()
+  instance_start_time = 0
+  partial_pricing = c(0,0)
   if(length(shouldMigrateIndexes) == 0) {
     shouldMigrateIndexes = NA
   }
@@ -1004,7 +1024,7 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
     shouldNotMigrateIndexes = NULL
   }
   for(i in phIndex:2) {
-    running_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+    running_az = getLowestPriceAz(i, prev_running_az)
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
 #    print(paste(running_az, i, cur_price))
     if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
@@ -1012,28 +1032,45 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
       cur_price = rp
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
       }
       in_spot_instance = 0
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+#        print(paste(cur_price, partial_pricing[2], partial_pricing[1]))
       }
       in_spot_instance = 1
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    current_time = end_time
+    prev_running_az = running_az
+
+    if(instance_start_time > 0) {
+      instance_start_time = instance_start_time - exec_time
+      consumed_time = consumed_time + exec_time
+      if (instance_start_time < 0) {
+        exec_time = instance_start_time * -1
+        consumed_time = consumed_time - exec_time
+      } else {
+        next
+      }
+    }    
+
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
+    partial_pricing = calculatePartialPricing(exec_time, cur_price, partial_pricing)
 
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
-
-    current_time = end_time
-    prev_running_az = running_az
   }
   migrate_summary = data.frame(migrate_indexes, migrate_azs, migrate_benefit)
   list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
@@ -1161,7 +1198,7 @@ spotInstanceWithMostAvailableUntilInterrupt <- function(phIndex, tp, rp, wl) {
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
@@ -1227,7 +1264,7 @@ spotInstanceUsingModelsUntilInterrupt <- function(phIndex, tp, rp, wl) {
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
@@ -1296,7 +1333,7 @@ spotInstanceUsingModelsPeriodicCheck <- function(phIndex, tp, rp, wl, period=360
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
@@ -1373,7 +1410,7 @@ spotInstanceUsingModelsMigrationThreshold <- function(phIndex, tp, rp, wl, min_t
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
@@ -1397,7 +1434,8 @@ spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, thr
   shouldMigrateIndexes = NA
   shouldNotMigrateIndexes = NULL
   elapsed_time = 0
-
+  instance_start_time = 0
+  partial_pricing = c(0, 0)
   for(i in phIndex:2) {
     if (elapsed_time > period) {
       candidate_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
@@ -1415,33 +1453,128 @@ spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, thr
       cur_price = rp
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
       }
       in_spot_instance = 0
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
       }
       in_spot_instance = 1
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    current_time = end_time
+    prev_running_az = running_az
+
+    if(instance_start_time > 0) {
+      instance_start_time = instance_start_time - exec_time
+      consumed_time = consumed_time + exec_time
+      if (instance_start_time < 0) {
+        exec_time = instance_start_time * -1
+        consumed_time = consumed_time - exec_time
+      } else {
+        next
+      }
+    }
+
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
+    partial_pricing = calculatePartialPricing(exec_time, cur_price, partial_pricing)
     elapsed_time = elapsed_time + exec_time
     if (wl[5] <= 0) {
-      consumed_price = consumed_price + (wl[5] / 3600)
+      consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
       consumed_time = consumed_time + wl[5]
       break
     }
-
-    current_time = end_time
-    prev_running_az = running_az
   }
   migrate_summary = data.frame(migrate_indexes, migrate_azs, migrate_benefit)
   list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
 }
 
+spotInstanceHourlyMigration <- function(phIndex, tp, rp, wl, threshold=1.0) {
+  in_spot_instance = 0
+  total_switch = 0
+  consumed_time = 0
+  consumed_price = 0
+  current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
+  prev_running_az = getLowestPriceAz(phIndex, "")
+  migrate_indexes = vector()
+  migrate_azs = vector()
+  migrate_benefit = vector()
+  shouldMigrateIndexes = NA
+  shouldNotMigrateIndexes = NULL
+  elapsed_time = 0
+  instance_start_time = 0
+  partial_pricing = c(0, 0)
+  for(i in phIndex:2) {
+    if (elapsed_time >= 3600) {
+      candidate_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+      candidate_price = ifelse(candidate_az=="ondemand", rp, ph[i, candidate_az])
+      prev_price = ifelse(prev_running_az=="ondemand", rp, ph[i, prev_running_az])
+      running_az = ifelse(prev_price * threshold > candidate_price, candidate_az, prev_running_az)
+      elapsed_time = 0
+    } else {
+      running_az = prev_running_az
+    }
+    cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
+#    print(paste(running_az, i, cur_price))
+    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+      running_az = "ondemand"
+      cur_price = rp
+      if (in_spot_instance == 1) {
+        total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+#        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+      }
+      in_spot_instance = 0
+    } else {
+      if (running_az != prev_running_az) {
+        total_switch = total_switch + 1
+        instance_start_time = getInstanceStartTime(start_latency)
+ #       consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+      }
+      in_spot_instance = 1
+    }
+    end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
+    exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    current_time = end_time
+    prev_running_az = running_az
+
+    if(instance_start_time > 0) {
+      instance_start_time = instance_start_time - exec_time
+      consumed_time = consumed_time + exec_time
+      if (instance_start_time < 0) {
+        exec_time = instance_start_time * -1
+        consumed_time = consumed_time - exec_time
+      } else {
+        next
+      }
+    }
+
+    elapsed_time = elapsed_time + exec_time
+
+    if (elapsed_time > 3600) {
+      exec_time = exec_time - (elapsed_time - 3600)
+      current_time = current_time - (elapsed_time - 3600)
+    }
+    wl = processWorkload(exec_time, wl)
+    consumed_time = consumed_time + exec_time
+    consumed_price = consumed_price + (cur_price * exec_time / 3600)
+    partial_pricing = calculatePartialPricing(exec_time, cur_price, partial_pricing)
+    if (wl[5] <= 0) {
+      consumed_price = consumed_price + (wl[5] * cur_price / 3600)
+      consumed_time = consumed_time + wl[5]
+      break
+    }
+  }
+  migrate_summary = data.frame(migrate_indexes, migrate_azs, migrate_benefit)
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
+}
 
 
 library(hash)
@@ -1905,4 +2038,20 @@ genStartLatency <- function(path) {
 
 getInstanceStartTime <- function(sl) {
   as.integer(sample(sl)[1]/1000)
+}
+
+runAllSims <- function(num_run=100) {
+  hn <- system("hostname", intern = TRUE)
+  for (i in 1:num_run) {
+    start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
+    for(j in c(1, 4, 24, 72, 168)) {
+      workload <- c(j, 3600, j-1, 3600, 0)
+      stat = spotInstanceHourlyMigration(start_index, 0.65, 0.65, workload)$stat
+      print(paste(hn,i,start_index,j,"hourly",stat[1],stat[2],stat[3],sep=","))
+      stat = spotInstanceBestPrice(start_index, 0.65, 0.65, workload)$stat
+      print(paste(hn,i,start_index,j,"best-price",stat[1],stat[2],stat[3],sep=","))
+      stat = spotInstanceAcrossRegionsUntilInterruption(start_index, 0.65, 0.65, workload)$stat
+      print(paste(hn,i,start_index,j,"interrupt",stat[1],stat[2],stat[3],sep=","))
+    }
+  }
 }
