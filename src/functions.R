@@ -2040,18 +2040,41 @@ getInstanceStartTime <- function(sl) {
   as.integer(sample(sl)[1]/1000)
 }
 
-runAllSims <- function(num_run=100) {
+runAllSims <- function(num_run=1000) {
   hn <- system("hostname", intern = TRUE)
   for (i in 1:num_run) {
     start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
     for(j in c(1, 4, 24, 72, 168)) {
       workload <- c(j, 3600, j-1, 3600, 0)
       stat = spotInstanceHourlyMigration(start_index, 0.65, 0.65, workload)$stat
-      print(paste(hn,i,start_index,j,"hourly",stat[1],stat[2],stat[3],sep=","))
+      postToSqs(paste(hn,i,start_index,j,"hourly",stat[1],stat[2],stat[3],sep=","))
       stat = spotInstanceBestPrice(start_index, 0.65, 0.65, workload)$stat
-      print(paste(hn,i,start_index,j,"best-price",stat[1],stat[2],stat[3],sep=","))
+      postToSqs(paste(hn,i,start_index,j,"best-price",stat[1],stat[2],stat[3],sep=","))
       stat = spotInstanceAcrossRegionsUntilInterruption(start_index, 0.65, 0.65, workload)$stat
-      print(paste(hn,i,start_index,j,"interrupt",stat[1],stat[2],stat[3],sep=","))
+      postToSqs(paste(hn,i,start_index,j,"interrupt",stat[1],stat[2],stat[3],sep=","))
     }
   }
+}
+
+
+runThresholdSims <- function(num_run=1000) {
+  hn <- system("hostname", intern = TRUE)
+  for (i in 1:num_run) {
+    start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
+    for (j in c(4, 24, 72, 168)) {
+      workload <- c(j, 3600, j-1, 3600, 0)
+      for (period in c(0, 600, 1800, 3600, 7200)) {
+        for (price_diff in c(0.5, 0.7, 0.9, 1.0)) {
+          stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, period, price_diff)$stat
+          postToSqs(paste(hn,i,start_index,j,period,price_diff,stat[1],stat[2],stat[3],sep=","))
+        }
+      }
+    }
+  }
+}
+
+postToSqs <- function(msg) {
+  cmd = paste("aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/647071230612/DeepSpotInstanceSimulation  --message-body ", '"', msg, '" --region us-east-1', sep="")
+  print(cmd)
+  system(cmd)
 }
