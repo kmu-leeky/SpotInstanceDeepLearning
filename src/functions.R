@@ -2128,6 +2128,27 @@ runThresholdInterrupt <- function(num_run=1000) {
   }
 }
 
+runThresholdCombination <- function(num_run=1000) {
+  hn <- system("hostname", intern = TRUE)
+  for (i in 1:num_run) {
+    start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
+    for (j in c(24, 168)) {
+      workload <- c(j, 3600, j-1, 3600, 0)
+      stat = spotInstanceAcrossRegionsUntilInterruption(start_index, 0.65, 0.65, workload)$stat
+      postToSqs(paste(hn,i,start_index,j,-1,-1,stat[1],stat[2],stat[3],sep=","))
+
+      stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, 0, 1.0)$stat
+      postToSqs(paste(hn,i,start_index,j,0,1.0,stat[1],stat[2],stat[3],sep=","))
+      for (period in c(1800, 3600, 7200)) {
+        for (price_diff in c(0.4, 0.6, 0.8)) {
+          stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, period, price_diff)$stat
+          postToSqs(paste(hn,i,start_index,j,period,price_diff,stat[1],stat[2],stat[3],sep=","))
+        }
+      }
+    }
+  }
+}
+
 runEc2Sims <- function(num_run=1000) {
   runThresholdSims(num_run)
 }
@@ -2135,7 +2156,7 @@ runEc2Sims <- function(num_run=1000) {
 postToSqs <- function(msg) {
   cmd = paste("aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/647071230612/DeepSpotInstanceSimulation --message-body ", '"', msg, '" --region us-east-1', sep="")
   print(cmd)
-#  system(cmd)
+  system(cmd)
 }
 
 getPivotValue <- function(table, hour, target, pivot="interrupt", pivot_col="V5") {
