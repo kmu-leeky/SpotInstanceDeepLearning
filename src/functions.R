@@ -51,7 +51,7 @@ getCompleteHistory <- function(folder, instance_types=c(), azs=c()) {
 addDiffTime <- function(x) {
   x$V3 <- rowShift(x$V2, -1)
   x$V4 <- strptime(x$V3, "%Y-%m-%dT%H:%M:%OS") - strptime(x$V2, "%Y-%m-%dT%H:%M:%OS")
-  colnames(x) <- c("price", "effectiveFrom", "effectiveUntil", "duration")
+  colnames(x) <- c("price", "effectiveFrom", "effectiveUntil", "duonalNormration")
   x$duration[1] <- 0
   x
 }
@@ -109,8 +109,8 @@ buildCheckpointTime <- function(path) {
   }
   colnames(checkpoint_time) <- c("AZ", "Size", "Latency")
   mean_time = setNames(aggregate(Latency~Size, data=checkpoint_time, mean), c("Size", "mean"))
-  min_time =  setNames(aggregate(Latency~Size, data=checkpoint_time, min), c("Size", "min"))
-  max_time =  setNames(aggregate(Latency~Size, data=checkpoint_time, max), c("Size", "max"))
+  min_time = setNames(aggregate(Latency~Size, data=checkpoint_time, min), c("Size", "min"))
+  max_time = setNames(aggregate(Latency~Size, data=checkpoint_time, max), c("Size", "max"))
   checkpoint_time = merge(merge(mean_time, min_time), max_time)
   checkpoint_time
 }
@@ -274,7 +274,7 @@ getNumberOfInterruption <- function(complete_history) {
       interrupts[r_key, c_key] = countNumberOfInterrupts(regular_price[[name]], price_table$price)/n_days
     }
   }
-#  interrupts[!is.na(interrupts$g2.2xlarge),]
+# interrupts[!is.na(interrupts$g2.2xlarge),]
   interrupts
 }
 
@@ -309,7 +309,7 @@ generateEmptyDf <- function(all_names, col_names) {
 }
 
 spotInstancePriceRatioFig <- function() {
-  ggplot(output, aes(AZs, ratio, colour=InstanceTypes, shape=InstanceTypes)) +geom_point(size = 3) + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position="top") + labs(x="Availability Zones", y="Spot Instance Price Ratio to On-Demand")  + geom_point(colour="grey90", size = 1.5) + ylim(c(0.0, 0.5))
+  ggplot(output, aes(AZs, ratio, colour=InstanceTypes, shape=InstanceTypes)) +geom_point(size = 3) + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position="top") + labs(x="Availability Zones", y="Spot Instance Price Ratio to On-Demand") + geom_point(colour="grey90", size = 1.5) + ylim(c(0.0, 0.5))
 }
 
 divideOnlySpotPriceByOndemand <- function(complete_history, offset=1.0) {
@@ -423,6 +423,7 @@ genHeatMap <- function(complete_history, instance_type) {
   out_matrix
 }
 
+library(gplots)
 #drawHeatmap(heat_matrix_r3[,1400:2096], "/Users/kyungyonglee/Documents/Research/Writing/InterRegionTensorFlow/figures/heatmap-r2-2x.pdf")
 drawHeatmap <- function(mat, fname = "") {
   ncol_mat = ncol(mat)
@@ -442,8 +443,9 @@ drawHeatmap <- function(mat, fname = "") {
   lwid=c(0.001, 4.999)
   lhei=c(0.01, 4.0, 0.1)
   lmat=rbind(c(0,3), c(2, 1), c(0, 4))
-#  heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none", lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0,  cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), margins =c(4,    11), key=FALSE)
-  heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none",     keysize=1, lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0,  cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), key.par=list(mar=c(6,5.0,1.5,5.0)),key.xlab="spot instance price ratio to the on-demand instance price",key.title="", margins =c(4,11), key=FALSE) 
+#  col=paste("gray",seq(10,40,10),sep="")
+# heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none", lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0, cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), margins =c(4, 11), key=FALSE)
+  heatmap.2(mat,col=cls, breaks=brks, Rowv=NA, Colv=NA, trace='none', dendrogram='none', density.info="none", keysize=1, lmat=lmat, lhei=lhei, lwid=lwid, labCol=col_name,srtCol=0, cexCol=1.0,cexRow=1.3,xlab="The day since July 1st. 2016.",adjCol=c(0,1), key.par=list(mar=c(6,5.0,1.5,5.0)),key.xlab="spot instance price ratio to the on-demand instance price",key.title="", margins =c(4,11), key=FALSE) 
   if(fname != "") {
     dev.off()
   }
@@ -485,7 +487,7 @@ getConsecutiveTimeStat <- function(offset=1.0) {
         consecutive_available <- 0
       }
     }
-    print(paste(name, ratio, min(avail_times), max(avail_times),  mean(avail_times), nrow(price_history), length(avail_times), rp, (sum(paid_price)/sum(paid_time))))
+    print(paste(name, ratio, min(avail_times), max(avail_times), mean(avail_times), nrow(price_history), length(avail_times), rp, (sum(paid_price)/sum(paid_time))))
   }
 }
 
@@ -506,7 +508,7 @@ genWorkload <- function(num_iteration=(40:100), iteration_time=(60:1800), intens
 
 processWorkload <- function(exec_time, workload) {
   total_remain <- (workload[2]*workload[3] + workload[4] - exec_time)
-#  print(paste("execution time", exec_time, "workloads", workload[1], workload[2],workload[3],workload[4], "remaining after execution", total_remain))
+# print(paste("execution time", exec_time, "workloads", workload[1], workload[2],workload[3],workload[4], "remaining after execution", total_remain))
   if(total_remain <= 0) {
     remain_workload <- c(workload[1], workload[2], 0, 0, total_remain)
   } else {
@@ -551,9 +553,9 @@ spotInstanceOndemandMixture <- function(ph, phIndex, tp, rp, ct, wl) {
         current_mode = "ondemand"
       }
     }
-#    print(paste("Processed workload", wl[1], wl[2], wl[3], wl[4], wl[5], exec_time, "current spot price is", ph[i, "price"]))
+# print(paste("Processed workload", wl[1], wl[2], wl[3], wl[4], wl[5], exec_time, "current spot price is", ph[i, "price"]))
     if (wl[5] <= 0) {
-#      print("Processing is over")
+# print("Processing is over")
       consumed_price = consumed_price + (unit_price * (exec_time + wl[5]) / 3600)
       consumed_time = consumed_time + exec_time + wl[5]
       break
@@ -572,14 +574,14 @@ spotInstanceOnDemandAlways <- function(ph, phIndex, tp, rp, ct, wl) {
   total_switch = 0
   in_spot_instance = 0
   for (i in phIndex:1) {
-    if(tp >= ph[i, "price"]) {  # bid successful
+    if(tp >= ph[i, "price"]) { # bid successful
       in_spot_instance = 1
       end_time = strptime(ph[i, "effectiveUntil"], "%Y-%m-%dT%H:%M:%OS")
       exec_time = round(as.numeric(end_time - ct, unit="secs"))
       wl = processWorkload(exec_time, wl)
-#      print(paste("Processed workload", wl[1], wl[2], wl[3], wl[4], wl[5], exec_time, "current spot price is", ph[i, "price"]))
+# print(paste("Processed workload", wl[1], wl[2], wl[3], wl[4], wl[5], exec_time, "current spot price is", ph[i, "price"]))
       if (wl[5] <= 0) {
-#        print("Processing is over")
+# print("Processing is over")
         consumed_price = consumed_price + (ph[i, "price"] * (exec_time + wl[5]) / 3600)
         consumed_time = consumed_time + exec_time + wl[5]
         break
@@ -587,9 +589,9 @@ spotInstanceOnDemandAlways <- function(ph, phIndex, tp, rp, ct, wl) {
       ct = end_time
       consumed_time = consumed_time + exec_time
       consumed_price = consumed_price + (ph[i, "price"] * exec_time / 3600)
-#      print(paste("current consumed price is", consumed_price))
+# print(paste("current consumed price is", consumed_price))
     } else {
-#      print(paste("outbid target price", tp, "regular price", rp, "current price", ph[i, "price"]))
+# print(paste("outbid target price", tp, "regular price", rp, "current price", ph[i, "price"]))
       if (in_spot_instance > 0) {
         total_switch = 1
       }
@@ -628,7 +630,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
   instance_start_time = 0
   setPriceTable(all_pt_g2_2x)
   azs = names(ph)
-  partial_pricing = c(0,0)  # first element is price, second is time
+  partial_pricing = c(0,0) # first element is price, second is time
   running_az = getLowestPriceAz(phIndex)
   prev_running_az = running_az
   current_time = strptime(ph[phIndex, "times"], "%Y-%m-%dT%H:%M:%OS")
@@ -640,13 +642,13 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
       running_az = getLowestPriceAz(i)
     }
     cur_price = ph[i, running_az]
-    if(tp < cur_price) {   # interruption find new spot instance
+    if(tp < cur_price) { # interruption find new spot instance
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
         switched=TRUE
         consumed_price = consumed_price - partial_pricing[1]
-        instance_start_time = getInstanceStartTime(start_latency)   
-#        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+        instance_start_time = getInstanceStartTime(start_latency) 
+# print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getLowestPriceAz(i)
       cur_price = ph[i, running_az]
@@ -657,9 +659,9 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
         if(prev_running_az != "ondemand") {
           .set(migration_plan, as.character(i), "ondemand")
         }
-#        print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+# print(paste("there is no si using od", i, running_az, cur_price, total_switch))
       } else {
-#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+# print(paste("got a new si", i, running_az, cur_price, total_switch))
         in_spot_instance = 1
         .set(migration_plan, as.character(i), running_az)
       }
@@ -669,7 +671,7 @@ spotInstanceAcrossRegionsUntilInterruption <- function(phIndex, tp, rp, wl) {
         switched=TRUE
         instance_start_time = getInstanceStartTime(start_latency)
         .set(migration_plan, as.character(i), running_az)
-#        print(paste("switch from od to si", i, running_az, cur_price, total_switch))
+# print(paste("switch from od to si", i, running_az, cur_price, total_switch))
       }
       in_spot_instance = 1
     }
@@ -768,14 +770,14 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
     migration_plan = hash()
     for(i in phIndex:2) {
       interrupted = FALSE
-#      running_az_time = system.time(selectOptimalAz(i, prev_running_az, NA))
+# running_az_time = system.time(selectOptimalAz(i, prev_running_az, NA))
       running_az = selectOptimalAz(i, prev_running_az, NA)
-#      running_az_time = system.time(getLowestPriceAz(i, prev_running_az))
-#      running_az = getLowestPriceAz(i, prev_running_az)
-#      print(paste("running_az_time", running_az_time, running_az))
-#      running_az = getLowestPriceAz(i, prev_running_az)  
+# running_az_time = system.time(getLowestPriceAz(i, prev_running_az))
+# running_az = getLowestPriceAz(i, prev_running_az)
+# print(paste("running_az_time", running_az_time, running_az))
+# running_az = getLowestPriceAz(i, prev_running_az) 
       cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-      if (tp <= cur_price) {  # should use on-demand instance as cur_price is the lowest one
+      if (tp <= cur_price) { # should use on-demand instance as cur_price is the lowest one
         running_az = "ondemand"
         cur_price = rp
         if (in_spot_instance == 1) {
@@ -797,7 +799,7 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
       consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
       if(interrupted == TRUE) {
-  #      print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:",             az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
+  # print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
 # If the minimal cost gain region was ondemand, we cannot avoid it because there is no option other than using on-demand instances
         if(length(cost_saving_switch) >0 && min_cost_gain_amt > cost_saving_switch && cost_saving_switch > 0 && prev_running_az!="ondemand") {
           min_cost_gain_index = as.character(prev_interrupt_index)
@@ -820,7 +822,7 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
 
       time_before_switch = time_before_switch + exec_time
       cost_saving_switch = cost_saving_switch + exec_time * (price_no_interrupt - cur_price)/3600.0
- #           print(paste(i, az_before_interrupt, price_no_interrupt, running_az, cur_price,    exec_time))
+ # print(paste(i, az_before_interrupt, price_no_interrupt, running_az, cur_price, exec_time))
 
       if (wl[5] <= 0) {
         consumed_price = consumed_price + (wl[5] * cur_price/ 3600)
@@ -858,7 +860,7 @@ getOptMigPlanRmLstGain <- function (phIndex, tp, rp, wl, minGainTh) {
   for(k in rev(keys(migration_plan))) {
     print(paste(k, migration_plan[[k]]))
   }
-  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan" = migration_plan)  
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan" = migration_plan) 
 }
 
 # Assuming each switch(migration) is independent, get indexes of migrations whose cost gain is larger than minGainTh
@@ -883,7 +885,7 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     interrupted = FALSE
     running_az = getLowestPriceAz(i, prev_running_az)
     cur_price = ph[i, running_az]
-    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+    if (tp < cur_price) { # should use on-demand instance as cur_price is the lowest one
       running_az = ""
       cur_price = rp
       if (in_spot_instance == 1) {
@@ -900,13 +902,13 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
-#    print(paste("exec_time", exec_time, "wl", wl))
+# print(paste("exec_time", exec_time, "wl", wl))
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
     consumed_price = consumed_price + (cur_price * exec_time / 3600)
 
     if(interrupted == TRUE) {
-#      print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
+# print(paste("time before switch is", time_before_switch, "cost savings", cost_saving_switch, i, "before interrupt:", az_before_interrupt, "prev az:", prev_running_az, "current az:", running_az, ph[i, prev_running_az], cur_price))
       if(length(cost_saving_switch) >0 && cost_saving_switch > minGainTh) {
         total_cost_savings = c(total_cost_savings, prev_interrupt_index)
       }
@@ -927,7 +929,7 @@ getIndexShouldMigrateSequential <- function(phIndex, tp, rp, wl, minGainTh) {
     current_time = end_time
     prev_running_az = running_az
   }
-#  print(c(consumed_price, consumed_time, total_switch))
+# print(c(consumed_price, consumed_time, total_switch))
   list("stat"=c(consumed_price, consumed_time, total_switch), "should_migrate_indexes"=total_cost_savings)
 }
 
@@ -937,7 +939,7 @@ selectOptimalAz <- function(i, prev_running_az, shouldMigrateIndex=NA) {
   } else if (!is.null(shouldNotMigrateIndex)) {
     i_key = as.character(i)
     if(has.key(i_key, shouldNotMigrateIndex)) {
-#      running_az = getLowestPriceAz(i, prev_running_az, shouldNotMigrateIndex[[i_key]])
+# running_az = getLowestPriceAz(i, prev_running_az, shouldNotMigrateIndex[[i_key]])
       #disable migration in the instance
       running_az = prev_running_az
     } else {
@@ -970,8 +972,8 @@ spotInstanceBestPriceFromPaymentTable <- function(phIndex, wl) {
   for(i in phIndex:2) {
     running_az = selectOptimalAz(i, prev_running_az)
     cur_payment = ph[i, running_az]
-#    print(paste(running_az, i, cur_price))
-    if (running_az == "ondemand") {  # should use on-demand instance as cur_price is the lowest   one
+# print(paste(running_az, i, cur_price))
+    if (running_az == "ondemand") { # should use on-demand instance as cur_price is the lowest one
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
         migrate_indexes = append(migrate_indexes, i)
@@ -1002,10 +1004,10 @@ spotInstanceBestPriceFromPaymentTable <- function(phIndex, wl) {
     prev_running_az = running_az
   }
   migrate_summary = data.frame(migrate_indexes, migrate_azs)
-  list("stat"=c(consumed_price, consumed_time, total_switch),                           "migrate_summary"=migrate_summary)
+  list("stat"=c(consumed_price, consumed_time, total_switch), "migrate_summary"=migrate_summary)
 }
 
-spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA,                         shouldNotMigrateIndexes=NULL) {
+spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, shouldNotMigrateIndexes=NULL) {
   in_spot_instance = 0
   total_switch = 0
   consumed_time = 0
@@ -1026,8 +1028,8 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
   for(i in phIndex:2) {
     running_az = getLowestPriceAz(i, prev_running_az)
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should use on-demand instance as cur_price is the lowest one
       running_az = "ondemand"
       cur_price = rp
       if (in_spot_instance == 1) {
@@ -1041,7 +1043,7 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
         total_switch = total_switch + 1
         instance_start_time = getInstanceStartTime(start_latency)
         consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
-#        print(paste(cur_price, partial_pricing[2], partial_pricing[1]))
+# print(paste(cur_price, partial_pricing[2], partial_pricing[1]))
       }
       in_spot_instance = 1
     }
@@ -1059,7 +1061,7 @@ spotInstanceBestPrice <- function(phIndex, tp, rp, wl, shouldMigrateIndexes=NA, 
       } else {
         next
       }
-    }    
+    } 
 
     wl = processWorkload(exec_time, wl)
     consumed_time = consumed_time + exec_time
@@ -1125,7 +1127,7 @@ getBestAzUsingModel <- function(phIndex, prev_running_az, time_to_secs, time_win
    }
   }
   return ("ondemand")
-#  min_expected_az = names(predicts)[which(min(predicts)==predicts)]
+# min_expected_az = names(predicts)[which(min(predicts)==predicts)]
 }
 
 getMostAvailableAz <- function(phIndex, rp=0.65) {
@@ -1159,14 +1161,14 @@ spotInstanceWithMostAvailableUntilInterrupt <- function(phIndex, tp, rp, wl) {
   for(i in phIndex:2) {
     if (prev_running_az == "ondemand") {
       running_az = getMostAvailableAz(i)
-#      print("previously in ondemand")
+# print("previously in ondemand")
     }
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should be migrated to either ondemand or other az
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
- #       print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+ # print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getMostAvailableAz(i)
       cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
@@ -1177,16 +1179,16 @@ spotInstanceWithMostAvailableUntilInterrupt <- function(phIndex, tp, rp, wl) {
         if(prev_running_az != "ondemand") {
           .set(migration_plan, as.character(i), "ondemand")
         }
-  #      print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+  # print(paste("there is no si using od", i, running_az, cur_price, total_switch))
       } else {
-#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+# print(paste("got a new si", i, running_az, cur_price, total_switch))
         in_spot_instance = 1
         .set(migration_plan, as.character(i), running_az)
       }
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
-   #     print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+   # print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
         .set(migration_plan, as.character(i), running_az)
       }
       in_spot_instance = 1
@@ -1225,14 +1227,14 @@ spotInstanceUsingModelsUntilInterrupt <- function(phIndex, tp, rp, wl) {
   for(i in phIndex:2) {
     if (prev_running_az == "ondemand") {
       running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
-#      print("previously in ondemand")
+# print("previously in ondemand")
     }
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should be migrated to either ondemand or other az
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
- #       print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+ # print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
       cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
@@ -1243,16 +1245,16 @@ spotInstanceUsingModelsUntilInterrupt <- function(phIndex, tp, rp, wl) {
         if(prev_running_az != "ondemand") {
           .set(migration_plan, as.character(i), "ondemand")
         }
-  #      print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+  # print(paste("there is no si using od", i, running_az, cur_price, total_switch))
       } else {
-#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+# print(paste("got a new si", i, running_az, cur_price, total_switch))
         in_spot_instance = 1
         .set(migration_plan, as.character(i), running_az)
       }
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
-   #     print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))    
+   # print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch)) 
         .set(migration_plan, as.character(i), running_az)
       }
       in_spot_instance = 1
@@ -1292,15 +1294,15 @@ spotInstanceUsingModelsPeriodicCheck <- function(phIndex, tp, rp, wl, period=360
   for(i in phIndex:2) {
     if (prev_running_az == "ondemand" || elapsed_period > period) {
       running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
-#      print(paste("previously in ondemand or elapsed time", elapsed_period, running_az))
+# print(paste("previously in ondemand or elapsed time", elapsed_period, running_az))
       elapsed_period = 0
     }
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should be migrated to either ondemand or other az
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
-#        print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+# print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
       cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
@@ -1311,16 +1313,16 @@ spotInstanceUsingModelsPeriodicCheck <- function(phIndex, tp, rp, wl, period=360
         if(prev_running_az != "ondemand") {
           .set(migration_plan, as.character(i), "ondemand")
         }
-#        print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+# print(paste("there is no si using od", i, running_az, cur_price, total_switch))
       } else {
-#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+# print(paste("got a new si", i, running_az, cur_price, total_switch))
         in_spot_instance = 1
         .set(migration_plan, as.character(i), running_az)
       }
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
-#        print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+# print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
         .set(migration_plan, as.character(i), running_az)
       }
       in_spot_instance = 1
@@ -1373,11 +1375,11 @@ spotInstanceUsingModelsMigrationThreshold <- function(phIndex, tp, rp, wl, min_t
     }
 
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
- #   print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should be migrated to either ondemand or other az
+ # print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should be migrated to either ondemand or other az
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
-     #   print(paste("interrupt from si", i, running_az, cur_price, total_switch))
+     # print(paste("interrupt from si", i, running_az, cur_price, total_switch))
       }
       running_az = getBestAzUsingModel(i, "", time_to_secs, time_windows)
       cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
@@ -1388,16 +1390,16 @@ spotInstanceUsingModelsMigrationThreshold <- function(phIndex, tp, rp, wl, min_t
         if(prev_running_az != "ondemand") {
           .set(migration_plan, as.character(i), "ondemand")
         }
-    #    print(paste("there is no si using od", i, running_az, cur_price, total_switch))
+    # print(paste("there is no si using od", i, running_az, cur_price, total_switch))
       } else {
-#        print(paste("got a new si", i, running_az, cur_price, total_switch))
+# print(paste("got a new si", i, running_az, cur_price, total_switch))
         in_spot_instance = 1
         .set(migration_plan, as.character(i), running_az)
       }
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
-#        print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
+# print(paste("different prev_running_az and cur running_az", i, running_az, cur_price, total_switch))
         .set(migration_plan, as.character(i), running_az)
       }
       in_spot_instance = 1
@@ -1421,7 +1423,9 @@ spotInstanceUsingModelsMigrationThreshold <- function(phIndex, tp, rp, wl, min_t
   list("stat"=c(consumed_price, consumed_time, total_switch), "migration_plan"=migration_plan)
 }
 
-spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, threshold=0.9) {
+# period means the periodic time pass before making migration
+# time_th means the amount of time that should be lowest
+spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, time_th=0, threshold=0.9) {
   in_spot_instance = 0
   total_switch = 0
   consumed_time = 0
@@ -1436,37 +1440,65 @@ spotInstanceBestPriceThreshold <- function(phIndex, tp, rp, wl, period=3600, thr
   elapsed_time = 0
   instance_start_time = 0
   partial_pricing = c(0, 0)
+  current_lowest_price_az = ""
+  current_lowest_price_time = 0
   for(i in phIndex:2) {
-    if (elapsed_time > period) {
+    if (elapsed_time >= period) {
       candidate_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
       candidate_price = ifelse(candidate_az=="ondemand", rp, ph[i, candidate_az])
       prev_price = ifelse(prev_running_az=="ondemand", rp, ph[i, prev_running_az])
-      running_az = ifelse(prev_price * threshold > candidate_price, candidate_az, prev_running_az)
+      if (candidate_az != prev_running_az) {
+        time_th_condition = current_lowest_price_time >= time_th
+        price_th_condition = prev_price * threshold >= candidate_price
+        running_az = ifelse((prev_price >= rp) | (price_th_condition&time_th_condition), candidate_az, prev_running_az)
+      } else {
+        running_az = candidate_az
+      }
       elapsed_time = 0
     } else {
+      if (time_th > 0) {
+        candidate_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+      }
       running_az = prev_running_az
+      if (running_az == "ondemand" | ph[i, running_az] >= rp) {
+        running_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+      }
     }
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should use on-demand instance as cur_price is the lowest one
       running_az = "ondemand"
       cur_price = rp
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
         instance_start_time = getInstanceStartTime(start_latency)
-        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+        if (period == 0 | period %% 3600 != 0) {
+          consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+        }
+#        print(paste(i, cur_price, prev_price, running_az, prev_running_az, candidate_az))
       }
       in_spot_instance = 0
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
         instance_start_time = getInstanceStartTime(start_latency)
-        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+        if (period == 0 | period %% 3600 != 0) {
+          consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+        }
+#        print(paste(i, cur_price, prev_price, running_az, prev_running_az))
       }
       in_spot_instance = 1
     }
     end_time = strptime(ph[i-1, "times"], "%Y-%m-%dT%H:%M:%OS")
     exec_time = round(as.numeric(end_time - current_time, unit="secs"))
+    if(time_th > 0) {
+      if (current_lowest_price_az == candidate_az) {
+        current_lowest_price_time = current_lowest_price_time + exec_time
+      } else {
+        current_lowest_price_az = candidate_az
+        current_lowest_price_time = exec_time
+      }
+    }
     current_time = end_time
     prev_running_az = running_az
 
@@ -1520,23 +1552,26 @@ spotInstanceHourlyMigration <- function(phIndex, tp, rp, wl, threshold=1.0) {
       elapsed_time = 0
     } else {
       running_az = prev_running_az
+      if (running_az == "ondemand" | ph[i, running_az] >= rp) {
+        running_az = selectOptimalAz(i, prev_running_az, shouldMigrateIndexes)
+      }
     }
     cur_price = ifelse(running_az=="ondemand", rp, ph[i, running_az])
-#    print(paste(running_az, i, cur_price))
-    if (tp < cur_price) {  # should use on-demand instance as cur_price is the lowest one
+# print(paste(running_az, i, cur_price))
+    if (tp < cur_price) { # should use on-demand instance as cur_price is the lowest one
       running_az = "ondemand"
       cur_price = rp
       if (in_spot_instance == 1) {
         total_switch = total_switch + 1
         instance_start_time = getInstanceStartTime(start_latency)
-#        consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+# consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
       }
       in_spot_instance = 0
     } else {
       if (running_az != prev_running_az) {
         total_switch = total_switch + 1
         instance_start_time = getInstanceStartTime(start_latency)
- #       consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
+ # consumed_price = consumed_price + ((3600/partial_pricing[2])*partial_pricing[1])
       }
       in_spot_instance = 1
     }
@@ -1587,7 +1622,7 @@ activities <- hash()
 
 runSpotInstanceSimAcrossRegion <- function(index, workload, price_offset, run_index, output="") {
 #print(paste("index is ", index))
-  stat = spotInstanceAcrossRegionsUntilInterruption(index, 0.65, 0.65,  workload)[["stat"]]
+  stat = spotInstanceAcrossRegionsUntilInterruption(index, 0.65, 0.65, workload)[["stat"]]
   print(paste("spotInstanceAcrossRegionsUntilInterruption", index, workload[1], workload[2], stat[1], stat[2], stat[3]))
   performance[["spotInstanceAcrossRegionsUntilInterruption"]][run_index,]=c(stat[1], stat[3])
 
@@ -1603,7 +1638,7 @@ runSpotInstanceSimAcrossRegion <- function(index, workload, price_offset, run_in
 
   result = spotInstanceUsingModelsUntilInterrupt(index, 0.65, 0.65, workload)
   stat = result[["stat"]]
-  print(paste("spotInstanceUsingModelsUntilInterrupt", workload[1], workload[2],        stat[1], stat[2], stat[3]))
+  print(paste("spotInstanceUsingModelsUntilInterrupt", workload[1], workload[2], stat[1], stat[2], stat[3]))
   performance[["spotInstanceUsingModelsUntilInterrupt"]][run_index,]=c(stat[1], stat[3])
 
   result = spotInstanceUsingModelsPeriodicCheck(index, 0.65, 0.65, workload)
@@ -1635,7 +1670,7 @@ siSim <- function(price_offset=1.0, output="", num_run=100) {
   sample_df = performance[["spotInstanceAcrossRegionsUntilInterruption"]]
   result_start_index = nrow(sample_df)
   for ( i in (1:num_run)) {
-#    submit_time <- genRandomDateTime()
+# submit_time <- genRandomDateTime()
     workload <- genWorkload()
     index = genMlSubmitTime("all_payment_g2_2x")
     tryCatch({
@@ -1658,7 +1693,7 @@ runSimulationPerRegion <- function(submit_time, workload, key, price_offset, out
   target_price <- rp * price_offset
   price_history <- complete_history[[key]]
   current_time <- submit_time
-#  print(workload)
+# print(workload)
   for (i in 1:nrow(price_history)) {
     ef = strptime(price_history[i, "effectiveFrom"], "%Y-%m-%dT%H:%M:%OS")
     eu = strptime(price_history[i, "effectiveUntil"], "%Y-%m-%dT%H:%M:%OS")
@@ -1699,7 +1734,7 @@ runFromScratch <- function(n) {
 
 getComparePic <- function(instanceType) {
   library(ggrepel)
-  ggplot(subset(oneshot, InstanceTypes==instanceType), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="System Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes==instanceType), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.0, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
+  ggplot(subset(oneshot, InstanceTypes==instanceType), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="System Availability") + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes==instanceType), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.0, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
 }
 
 getConsecutiveAvailableTime <- function(offset = 1.0) {
@@ -1736,9 +1771,9 @@ getConsecutiveAvailableCount <- function() {
 }
 
 
-#ggplot(subset(oneshot, InstanceTypes=="g2.2xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.2xlarge"), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.1, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
+#ggplot(subset(oneshot, InstanceTypes=="g2.2xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability") + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.2xlarge"), mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.1, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none")
 
-#ggplot(subset(oneshot, InstanceTypes=="g2.8xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability")  + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.8xlarge"), max.iter=20000, mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.01, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none") + xlim(0, 1.0) + ylim(0, 1.0)
+#ggplot(subset(oneshot, InstanceTypes=="g2.8xlarge"), aes(spotToOndemandFromOne, spotLower)) + geom_point(size = 3) + labs(x="Cost Efficiency", y="Spot Instance Availability") + geom_point(colour="grey90", size = 1.5) + geom_label_repel(data=subset(oneshot, InstanceTypes=="g2.8xlarge"), max.iter=20000, mapping=aes(x=spotToOndemandFromOne, y=spotLower, label=AZs), box.padding = unit(0.5, "lines"), point.padding = unit(0.01, "lines"), fontface = 'bold', color = 'blue') +theme(legend.position="none") + xlim(0, 1.0) + ylim(0, 1.0)
 
 mergeLogs <- function(paths) {
   library(hash)
@@ -1887,8 +1922,8 @@ getPriceWindow <- function(pr_str, all_pt_str, time_windows, time_to_secs=time_t
     index = which(all_pt$times==submit_time)
     newer_tws = getIndexOfTimeDiff(time_to_secs, index, time_windows, 1)
     older_tws = getIndexOfTimeDiff(time_to_secs, index, time_windows, -1)
-#    iterateWindowsCor(pr_str, all_pt_str, newer_tws, time_windows, azs, index, ns, 1, max_od, avg_out, rp)
-#    iterateWindowsCor(pr_str, all_pt_str, older_tws, time_windows, azs, index, ns, -1, max_od, avg_out, rp)
+# iterateWindowsCor(pr_str, all_pt_str, newer_tws, time_windows, azs, index, ns, 1, max_od, avg_out, rp)
+# iterateWindowsCor(pr_str, all_pt_str, older_tws, time_windows, azs, index, ns, -1, max_od, avg_out, rp)
     iterateWindowsMl(pr_str, all_pt_str, newer_tws, time_windows, azs, index, ns, "after", max_od, avg_out, rp)
     iterateWindowsMl(pr_str, all_pt_str, older_tws, time_windows, azs, index, ns, "before", max_od, avg_out, rp)
   }
@@ -2012,7 +2047,7 @@ iteratePriceRelationPerTw <- function(price_relation, time_windows=time_windows)
     cor_coef = output[1,2]
     times = unlist(strsplit(tw,"-"))
     out_matrix[times[1], times[2]] = output[1,2]
-#    print(paste(tw, output[1,2]))
+# print(paste(tw, output[1,2]))
   }
   out_matrix
 }
@@ -2063,8 +2098,28 @@ runThresholdSims <- function(num_run=1000) {
     start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
     for (j in c(4, 24, 72, 168)) {
       workload <- c(j, 3600, j-1, 3600, 0)
+      for (period in c(0, 60, 600, 1800, 3600, 7200)) {
+          stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, 0, period, 1.0)$stat
+          postToSqs(paste(hn,i,start_index,j,period,1.0,stat[1],stat[2],stat[3],sep=","))
+      }
+      for (price_diff in c(0.2, 0.4, 0.6, 0.8, 0.9)) {
+        stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, 0, 0, price_diff)$stat
+        postToSqs(paste(hn,i,start_index,j,0,price_diff,stat[1],stat[2],stat[3],  sep=","))
+      }
+    }
+  }
+}
+
+runThresholdInterrupt <- function(num_run=1000) {
+  hn <- system("hostname", intern = TRUE)
+  for (i in 1:num_run) {
+    start_index = as.integer(runif(1, nrow(all_pt_g2_2x)*0.1, nrow(all_pt_g2_2x)))
+    for (j in c(24, 168)) {
+      workload <- c(j, 3600, j-1, 3600, 0)
+      stat = spotInstanceAcrossRegionsUntilInterruption(start_index, 0.65, 0.65, workload)$stat
+      postToSqs(paste(hn,i,start_index,j,-1,-1,stat[1],stat[2],stat[3],sep=","))
       for (period in c(0, 600, 1800, 3600, 7200)) {
-        for (price_diff in c(0.5, 0.7, 0.9, 1.0)) {
+        for (price_diff in c(0.2, 0.4, 0.6, 0.8, 1.0)) {
           stat = spotInstanceBestPriceThreshold(start_index, 0.65, 0.65, workload, period, price_diff)$stat
           postToSqs(paste(hn,i,start_index,j,period,price_diff,stat[1],stat[2],stat[3],sep=","))
         }
@@ -2073,8 +2128,79 @@ runThresholdSims <- function(num_run=1000) {
   }
 }
 
+
 postToSqs <- function(msg) {
-  cmd = paste("aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/647071230612/DeepSpotInstanceSimulation  --message-body ", '"', msg, '" --region us-east-1', sep="")
+  cmd = paste("aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/647071230612/DeepSpotInstanceSimulation --message-body ", '"', msg, '" --region us-east-1', sep="")
   print(cmd)
-  system(cmd)
+#  system(cmd)
 }
+
+getPivotValue <- function(table, hour, target, pivot="interrupt", pivot_col="V5") {
+  pivot_price = table[which(table[,pivot_col]==pivot & table$V4==hour), target]
+  pivot_price
+}
+
+# t<-read.csv("/Users/kyungyonglee/Documents/Research/SpotInstance/SpotInstanceDeepLearning/src/interrupt_hourly_bestprice_simulation",header=F)
+# mean_hour=aggregate(V7~V5+V4, data=t, mean)
+# mean_hour_norm<-conditionalNorm(mean_hour, "V7")
+# mean_price=aggregate(V6~V5+V4, data=t, mean)
+# mean_price_norm<-conditionalNorm(mean_price, "V6")
+# mean_price_time_norm$V5<-factor(mean_price_time_norm$V5, c("0", "1", "10", "30", "60", "120"))  to change order of a bar plot
+
+# with dataset of price,time threshold
+# mean_price_time = subset(mean_price[which(mean_price$V6==1.0),], select=-c(V6))
+# mean_price_time_norm<-conditionalNorm(mean_price_time, "V7", 0)
+# mean_price_time_norm$V5<-factor(mean_price_time_norm$V5, c("0", "1", "10", "30", "60", "120"))
+# ggplot(mean_price_time_norm[which(mean_price_time_norm$V4!=1),], aes(factor(V4), V10, fill = V5)) + geom_bar(stat="identity", position = "dodge", colour="grey") + scale_fill_brewer("time threshold(secs)") + geom_hline(yintercept=1.0) + theme(legend.position="top", axis.text.x = element_text(size=20), axis.text.y = element_text(size=20), text = element_text(size=20),plot.margin=unit(c(0,0.5,0,0.5), "cm")) + ylab("normalized price") + xlab("workload running time (hours)")
+
+conditionalNorm <- function(table, target, pivot="interrupt", pivot_col="V4") {
+  norm_table = table
+  for(i in 1:nrow(norm_table)) {
+    norm_table[i,"V10"] = 
+      norm_table[i, target] / getPivotValue(norm_table, norm_table[i, "V4"], target, pivot, pivot_col)
+  }
+  norm_table
+}
+
+# createSimulationLatencyFigure(mean_hour_norm)
+createSimulationPriceFigure <- function(mean_price_norm) {
+  ggplot(mean_price_norm[which(mean_price_norm$V4!=1),], aes(factor(V4), V10, fill = V5)) + geom_bar(stat="identity", position = "dodge", colour="grey") + scale_fill_brewer() + geom_hline(yintercept=1.0) + theme(legend.position="top", legend.title=element_blank(), axis.text.x = element_text(size=20), axis.text.y = element_text(size=20), text = element_text(size=20), plot.margin = unit(c(0,0.5,0,0.5), "cm")) + ylab("normalized price") + xlab("workload running time (hours)") + coord_cartesian(ylim = c(0.0, 1.3))
+}
+
+# createSimulationLatencyFigure(mean_price_norm)
+createSimulationLatencyFigure <- function(mean_price_norm) {
+  ggplot(mean_price_norm[which(mean_price_norm$V4!=1),], aes(factor(V4), V10, fill = V5)) + geom_bar(stat="identity", position = "dodge", colour="grey") + scale_fill_brewer() + geom_hline(yintercept=1.0) + theme(legend.position="top", legend.title=element_blank(), axis.text.x = element_text(size=20), axis.text.y = element_text(size=20), text = element_text(size=20), plot.margin = unit(c(0,0.5,0,0.5), "cm")) + ylab("normalized task completion time") + xlab("workload running time (hours)") + coord_cartesian(ylim = c(0.0, 1.3))
+}
+
+# threshold_sim <- read.csv("/Users/kyungyonglee/Documents/Research/SpotInstance/SpotInstanceDeepLearning/src/best_price_threshold_time_price",header=F)
+# threshold_aggregate<-aggregate(cbind(V7,V8,V9)~V4+V5+V6, data=threshold_sim, mean)
+# thresholdSimulationToMatrix(threshold_aggregate, "V7")
+thresholdSimulationToMatrix <- function(aggregated_result, target) {
+  workloads = c(4, 24, 72, 168)
+#  workloads = c(24, 168)
+  aggr_out=list()
+  for (w in workloads) {
+    partial_table = aggregated_result[which(aggregated_result$V4==w),]
+    times = unique(partial_table$V5)
+    prices = rev(unique(partial_table$V6))
+    if(-1 %in% times) {
+      times = times[-which(times == -1)]
+    }
+    if(-1 %in% prices) {
+      prices = prices[-which(prices == -1)]
+    }
+    pivot_value = partial_table[which(partial_table$V5==-1 & partial_table$V6==-1), target]
+    out_matrix = matrix(data=NA, nrow=length(times), ncol=length(prices), dimnames=list(as.character(times), as.character(prices)))
+    for (t in times) {
+      for (p in prices) {
+        rn = as.character(t)
+        cn = as.character(p)
+        out_value = ifelse(length(pivot_value)==0, partial_table[which(partial_table$V5==t & partial_table$V6==p), target], partial_table[which(partial_table$V5==t & partial_table$V6==p),target]/pivot_value)
+        out_matrix[rn,cn] = out_value
+      }
+    }
+    aggr_out[[as.character(w)]]=out_matrix
+  }
+  aggr_out
+}
+
