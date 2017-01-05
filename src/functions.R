@@ -2128,6 +2128,9 @@ runThresholdInterrupt <- function(num_run=1000) {
   }
 }
 
+runEc2Sims <- function(num_run=1000) {
+  runThresholdSims(num_run)
+}
 
 postToSqs <- function(msg) {
   cmd = paste("aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/647071230612/DeepSpotInstanceSimulation --message-body ", '"', msg, '" --region us-east-1', sep="")
