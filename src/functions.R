@@ -2150,7 +2150,7 @@ runThresholdCombination <- function(num_run=1000) {
 }
 
 runEc2Sims <- function(num_run=1000) {
-  runThresholdSims(num_run)
+  runThresholdCombination(num_run)
 }
 
 postToSqs <- function(msg) {
